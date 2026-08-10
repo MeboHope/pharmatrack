@@ -1,54 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Lock, 
-  Mail, 
-  User, 
-  Shield, 
-  CheckCircle2, 
-  X, 
-  KeyRound, 
-  Send, 
-  AlertCircle, 
-  Copy, 
-  Check, 
+import {
+  Lock,
+  Mail,
+  User,
+  CheckCircle2,
+  X,
+  Send,
+  AlertCircle,
   ArrowRight,
-  RefreshCw,
   Eye,
   EyeOff,
-  UserCheck
+  UserCheck,
+  Loader2,
 } from 'lucide-react';
 import { UserAccount } from '../types';
+import { sendPasswordReset, signIn, signUp } from '../lib/auth';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  users: UserAccount[];
   currentUser: UserAccount | null;
   onLoginSuccess: (user: UserAccount) => void;
-  onSignUpSuccess: (newUser: UserAccount) => void;
   initialMode?: 'login' | 'signup' | 'forgot';
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
-  users,
   currentUser,
   onLoginSuccess,
-  onSignUpSuccess,
   initialMode = 'login',
 }) => {
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot'>(initialMode);
-
-  useEffect(() => {
-    if (isOpen) {
-      setAuthMode(initialMode);
-      setOtpStep(false);
-      setLoginError('');
-      setSignupError('');
-      setResetError('');
-    }
-  }, [isOpen, initialMode]);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
@@ -65,87 +48,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupError, setSignupError] = useState('');
+  const [signupNotice, setSignupNotice] = useState('');
 
-  // OTP Verification state
-  const [otpStep, setOtpStep] = useState(false); // false = form, true = enter OTP
-  const [generatedOtp, setGeneratedOtp] = useState('');
-  const [enteredOtp, setEnteredOtp] = useState('');
-  const [otpCopied, setOtpCopied] = useState(false);
-  const [otpTimer, setOtpTimer] = useState(60);
-  const [otpSentMessage, setOtpSentMessage] = useState(false);
-
-  // Reset Password State
+  // Password reset state
   const [resetEmail, setResetEmail] = useState('');
-  const [resetOtpStep, setResetOtpStep] = useState(false);
-  const [resetGeneratedOtp, setResetGeneratedOtp] = useState('');
-  const [resetEnteredOtp, setResetEnteredOtp] = useState('');
-  const [resetNewPassword, setResetNewPassword] = useState('');
-  const [resetSuccess, setResetSuccess] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [resetSent, setResetSent] = useState(false);
 
-  // OTP Countdown Timer Effect
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (otpStep && otpTimer > 0) {
-      interval = setInterval(() => {
-        setOtpTimer((prev) => prev - 1);
-      }, 1000);
+    if (isOpen) {
+      setAuthMode(initialMode);
+      setLoginError('');
+      setSignupError('');
+      setSignupNotice('');
+      setResetError('');
+      setResetSent(false);
+      setIsSubmitting(false);
     }
-    return () => clearInterval(interval);
-  }, [otpStep, otpTimer]);
+  }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
 
-  // Helper to generate 6-digit OTP
-  const generateNewOtp = () => {
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    return code;
-  };
-
-  // Handle Login
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setIsSubmitting(true);
 
-    const found = users.find(
-      (u) => u.email.toLowerCase() === loginEmail.trim().toLowerCase()
-    ) || users[0];
-
-    if (found) {
-      onLoginSuccess(found);
+    try {
+      const user = await signIn(loginEmail.trim().toLowerCase(), loginPassword);
+      onLoginSuccess(user);
+      setLoginPassword('');
       onClose();
-    } else {
-      const defaultUser: UserAccount = {
-        id: 'usr-' + Date.now(),
-        name: loginEmail ? loginEmail.split('@')[0] : 'Dr. Sarah Jenkins',
-        email: loginEmail || 's.jenkins@pharmatrack.com',
-        role: 'Pharmacist',
-        passwordHash: loginPassword || '123456',
-        isVerified: true,
-        createdAt: new Date().toISOString()
-      };
-      onLoginSuccess(defaultUser);
-      onClose();
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Unable to log in. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  // Quick Demo Login
-  const handleQuickLogin = (demoUser: UserAccount) => {
-    onLoginSuccess(demoUser);
-    onClose();
-  };
-
-  // Request Signup OTP
-  const handleRequestSignupOtp = (e: React.FormEvent) => {
+  const handleSignUpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError('');
+    setSignupNotice('');
 
     if (!signupName.trim()) {
       setSignupError('Full Name is required.');
-      return;
-    }
-    if (!signupEmail.trim() || !signupEmail.includes('@')) {
-      setSignupError('Please enter a valid email address.');
       return;
     }
     if (signupPassword.length < 6) {
@@ -157,107 +106,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Check if email already exists
-    const existing = users.find((u) => u.email.toLowerCase() === signupEmail.trim().toLowerCase());
-    if (existing) {
-      setSignupError('An account with this email address already exists. Please log in instead.');
-      return;
-    }
+    setIsSubmitting(true);
+    try {
+      const result = await signUp({
+        name: signupName.trim(),
+        email: signupEmail.trim().toLowerCase(),
+        password: signupPassword,
+        phone: signupPhone.trim(),
+        role: signupRole,
+      });
 
-    // Generate & send OTP
-    const code = generateNewOtp();
-    setGeneratedOtp(code);
-    setOtpStep(true);
-    setOtpTimer(60);
-    setOtpSentMessage(true);
-  };
+      setSignupPassword('');
+      setSignupConfirmPassword('');
 
-  // Verify Signup OTP
-  const handleVerifySignupOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSignupError('');
-
-    if (enteredOtp.trim() !== generatedOtp) {
-      setSignupError('Invalid OTP code. Please check the simulated email notification code below.');
-      return;
-    }
-
-    // Create New User
-    const newUser: UserAccount = {
-      id: `USR-${String(users.length + 1).padStart(3, '0')}`,
-      name: signupName.trim(),
-      email: signupEmail.trim().toLowerCase(),
-      phone: signupPhone.trim(),
-      role: signupRole,
-      passwordHash: signupPassword,
-      isVerified: true,
-      createdAt: new Date().toISOString().slice(0, 10),
-    };
-
-    onSignUpSuccess(newUser);
-    onClose();
-  };
-
-  // Handle Request Password Reset OTP
-  const handleRequestResetOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    setResetError('');
-
-    const existing = users.find((u) => u.email.toLowerCase() === resetEmail.trim().toLowerCase());
-    if (!existing) {
-      setResetError('No account found with this email address.');
-      return;
-    }
-
-    const code = generateNewOtp();
-    setResetGeneratedOtp(code);
-    setResetOtpStep(true);
-  };
-
-  // Handle Verify Reset OTP & Update Password
-  const handleVerifyResetOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    setResetError('');
-
-    if (resetEnteredOtp.trim() !== resetGeneratedOtp) {
-      setResetError('Invalid verification OTP code.');
-      return;
-    }
-    if (resetNewPassword.length < 6) {
-      setResetError('New password must be at least 6 characters.');
-      return;
-    }
-
-    // Update password in user list
-    const updatedUsers = users.map((u) => {
-      if (u.email.toLowerCase() === resetEmail.trim().toLowerCase()) {
-        return { ...u, passwordHash: resetNewPassword };
+      if (result.needsEmailConfirmation || !result.user) {
+        setSignupNotice(
+          `Account created. Check ${signupEmail.trim()} for a confirmation link, then log in.`
+        );
+        return;
       }
-      return u;
-    });
 
-    localStorage.setItem('pharmatrack_users', JSON.stringify(updatedUsers));
-    setResetSuccess(true);
-    setTimeout(() => {
-      setResetSuccess(false);
-      setAuthMode('login');
-      setLoginEmail(resetEmail);
-    }, 2000);
+      onLoginSuccess(result.user);
+      onClose();
+    } catch (err) {
+      setSignupError(err instanceof Error ? err.message : 'Unable to sign up. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setOtpCopied(true);
-    setTimeout(() => setOtpCopied(false), 2000);
-  };
+  const handleRequestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError('');
+    setIsSubmitting(true);
 
-  if (!isOpen) return null;
+    try {
+      await sendPasswordReset(resetEmail.trim().toLowerCase());
+      setResetSent(true);
+    } catch (err) {
+      setResetError(
+        err instanceof Error ? err.message : 'Unable to send the reset email. Please try again.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto no-print">
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden relative animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* Header Header Banner */}
+        {/* Header Banner */}
         <div className="bg-[#22577A] text-white p-6 relative">
           <button
             type="button"
@@ -273,8 +171,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <h2 className="text-xl font-bold tracking-tight">PharmaTrack Account</h2>
               <p className="text-xs text-white/80 font-medium">
                 {authMode === 'login' && 'Log in to access dispensing & management system'}
-                {authMode === 'signup' && 'Create your account with email OTP verification'}
-                {authMode === 'forgot' && 'Reset your password via Email OTP'}
+                {authMode === 'signup' && 'Create your account to access the pharmacy database'}
+                {authMode === 'forgot' && 'Reset your password via a secure email link'}
               </p>
             </div>
           </div>
@@ -285,7 +183,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="button"
               onClick={() => {
                 setAuthMode('login');
-                setOtpStep(false);
                 setLoginError('');
               }}
               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
@@ -300,7 +197,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="button"
               onClick={() => {
                 setAuthMode('signup');
-                setOtpStep(false);
                 setSignupError('');
               }}
               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
@@ -309,7 +205,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   : 'text-white/80 hover:bg-white/10'
               }`}
             >
-              Sign Up (OTP)
+              Sign Up
             </button>
           </div>
         </div>
@@ -361,12 +257,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-slate-700">
-                    Password
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700">Password</label>
                   <button
                     type="button"
-                    onClick={() => setAuthMode('forgot')}
+                    onClick={() => {
+                      setResetEmail(loginEmail);
+                      setAuthMode('forgot');
+                    }}
                     className="text-[11px] font-semibold text-[#22577A] hover:underline"
                   >
                     Forgot Password?
@@ -394,235 +291,157 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
+                disabled={isSubmitting}
+                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
               >
-                Log In <ArrowRight className="w-4 h-4" />
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Logging in...
+                  </>
+                ) : (
+                  <>
+                    Log In <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
-
-              {/* Demo Accounts List */}
-              <div className="pt-3 border-t border-slate-100">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                  Quick Demo Login Options
-                </div>
-                <div className="grid grid-cols-1 gap-2">
-                  {users.slice(0, 2).map((user) => (
-                    <button
-                      key={user.id}
-                      type="button"
-                      onClick={() => handleQuickLogin(user)}
-                      className="p-2 text-left bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-between transition-colors group"
-                    >
-                      <div>
-                        <div className="text-xs font-bold text-slate-800 group-hover:text-[#22577A]">
-                          {user.name}
-                        </div>
-                        <div className="text-[10px] text-slate-500">{user.email} • {user.role}</div>
-                      </div>
-                      <span className="text-[10px] font-bold text-[#22577A] bg-sky-100 px-2 py-0.5 rounded">
-                        Quick Log In
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
             </form>
           )}
 
-          {/* TAB 2: SIGN UP (WITH EMAIL OTP) */}
+          {/* TAB 2: SIGN UP */}
           {authMode === 'signup' && (
-            <div>
+            <form onSubmit={handleSignUpSubmit} className="space-y-3">
               {signupError && (
-                <div className="mb-3 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <span>{signupError}</span>
                 </div>
               )}
 
-              {!otpStep ? (
-                /* STEP 1: Signup Details Form */
-                <form onSubmit={handleRequestSignupOtp} className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Full Name *
-                    </label>
-                    <div className="relative">
-                      <User className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        required
-                        placeholder="Dr. Alex Rivera"
-                        value={signupName}
-                        onChange={(e) => setSignupName(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Email Address (for OTP verification) *
-                    </label>
-                    <div className="relative">
-                      <Mail className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="email"
-                        required
-                        placeholder="alex.rivera@afyalinkpharmacy.co.ke"
-                        value={signupEmail}
-                        onChange={(e) => setSignupEmail(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Role *
-                      </label>
-                      <select
-                        value={signupRole}
-                        onChange={(e) => setSignupRole(e.target.value as any)}
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden font-medium"
-                      >
-                        <option value="Clinician">Clinician</option>
-                        <option value="Pharmacist">Pharmacist</option>
-                        <option value="Admin">Admin</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Phone Number
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="0712345678"
-                        value={signupPhone}
-                        onChange={(e) => setSignupPhone(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Password *
-                      </label>
-                      <input
-                        type={showSignupPassword ? 'text' : 'password'}
-                        required
-                        placeholder="Min 6 chars"
-                        value={signupPassword}
-                        onChange={(e) => setSignupPassword(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Confirm Password *
-                      </label>
-                      <input
-                        type={showSignupPassword ? 'text' : 'password'}
-                        required
-                        placeholder="Repeat password"
-                        value={signupConfirmPassword}
-                        onChange={(e) => setSignupConfirmPassword(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer"
-                  >
-                    <Send className="w-4 h-4" /> Send Verification Code (OTP)
-                  </button>
-                </form>
-              ) : (
-                /* STEP 2: OTP Entry Form */
-                <form onSubmit={handleVerifySignupOtp} className="space-y-4">
-                  {/* Simulated Email Delivery Banner */}
-                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="flex items-center gap-1.5 text-emerald-800">
-                        <Mail className="w-4 h-4" /> Simulated Email OTP Sent!
-                      </span>
-                      <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
-                        Just Now
-                      </span>
-                    </div>
-                    <p className="text-xs text-emerald-800">
-                      We've dispatched a 6-digit code to <strong>{signupEmail}</strong>:
-                    </p>
-                    <div className="bg-white p-2.5 rounded-lg border border-emerald-300 flex items-center justify-between font-mono text-lg font-bold tracking-widest text-emerald-900 shadow-xs">
-                      <span>{generatedOtp}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEnteredOtp(generatedOtp);
-                          copyToClipboard(generatedOtp);
-                        }}
-                        className="text-xs font-sans font-semibold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2.5 py-1 rounded transition-colors flex items-center gap-1"
-                      >
-                        {otpCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                        {otpCopied ? 'Copied & Auto-filled!' : 'Auto-fill OTP'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Enter 6-Digit OTP Verification Code
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      required
-                      placeholder="e.g. 591034"
-                      value={enteredOtp}
-                      onChange={(e) => setEnteredOtp(e.target.value)}
-                      className="w-full text-center text-xl font-mono tracking-widest font-bold py-2 bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <button
-                      type="button"
-                      onClick={() => setOtpStep(false)}
-                      className="hover:underline text-slate-700 font-medium"
-                    >
-                      ← Edit Registration Details
-                    </button>
-                    <button
-                      type="button"
-                      disabled={otpTimer > 0}
-                      onClick={() => {
-                        const code = generateNewOtp();
-                        setGeneratedOtp(code);
-                        setOtpTimer(60);
-                      }}
-                      className="text-[#22577A] hover:underline font-semibold disabled:opacity-50 flex items-center gap-1"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Resend OTP {otpTimer > 0 && `(${otpTimer}s)`}
-                    </button>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" /> Verify OTP & Create Account
-                  </button>
-                </form>
+              {signupNotice && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>{signupNotice}</span>
+                </div>
               )}
-            </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name *</label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Dr. Alex Rivera"
+                    value={signupName}
+                    onChange={(e) => setSignupName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Email Address *
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    required
+                    placeholder="alex.rivera@afyalinkpharmacy.co.ke"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Role *</label>
+                  <select
+                    value={signupRole}
+                    onChange={(e) =>
+                      setSignupRole(e.target.value as 'Clinician' | 'Pharmacist' | 'Admin')
+                    }
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden font-medium"
+                  >
+                    <option value="Clinician">Clinician</option>
+                    <option value="Pharmacist">Pharmacist</option>
+                    <option value="Admin">Admin</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="0712345678"
+                    value={signupPhone}
+                    onChange={(e) => setSignupPhone(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700">Password *</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowSignupPassword(!showSignupPassword)}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      {showSignupPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <input
+                    type={showSignupPassword ? 'text' : 'password'}
+                    required
+                    placeholder="Min 6 chars"
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Confirm Password *
+                  </label>
+                  <input
+                    type={showSignupPassword ? 'text' : 'password'}
+                    required
+                    placeholder="Repeat password"
+                    value={signupConfirmPassword}
+                    onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 mt-2 cursor-pointer disabled:opacity-60"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Creating account...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" /> Create Account
+                  </>
+                )}
+              </button>
+            </form>
           )}
 
-          {/* TAB 3: FORGOT PASSWORD RESET VIA OTP */}
+          {/* TAB 3: FORGOT PASSWORD */}
           {authMode === 'forgot' && (
             <div className="space-y-4">
               {resetError && (
@@ -632,15 +451,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               )}
 
-              {resetSuccess ? (
+              {resetSent ? (
                 <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-xl text-center space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                  <div>Password reset successfully! Redirecting to login...</div>
+                  <div>
+                    If an account exists for {resetEmail}, a password reset link is on its way.
+                    Follow the link in the email to choose a new password.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className="text-[#22577A] hover:underline font-bold"
+                  >
+                    Back to log in
+                  </button>
                 </div>
-              ) : !resetOtpStep ? (
-                <form onSubmit={handleRequestResetOtp} className="space-y-3">
+              ) : (
+                <form onSubmit={handleRequestReset} className="space-y-3">
                   <p className="text-xs text-slate-600">
-                    Enter your registered email address and we will send you a 6-digit OTP code to reset your password.
+                    Enter your registered email address and we will send you a secure link to reset
+                    your password.
                   </p>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -661,51 +491,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <button
                     type="submit"
-                    className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
+                    disabled={isSubmitting}
+                    className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
                   >
-                    <Send className="w-4 h-4" /> Send Password Reset OTP
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleVerifyResetOtp} className="space-y-3">
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 space-y-1">
-                    <div className="text-xs font-bold">Simulated Reset OTP Code:</div>
-                    <div className="font-mono text-lg font-bold text-emerald-800">{resetGeneratedOtp}</div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Enter 6-Digit Reset OTP Code
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      required
-                      value={resetEnteredOtp}
-                      onChange={(e) => setResetEnteredOtp(e.target.value)}
-                      className="w-full text-center text-lg font-mono tracking-widest font-bold py-2 border border-slate-300 rounded-xl focus:border-[#22577A]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      New Password
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="At least 6 characters"
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:border-[#22577A]"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
-                  >
-                    <KeyRound className="w-4 h-4" /> Reset Password Now
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" /> Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" /> Send Password Reset Link
+                      </>
+                    )}
                   </button>
                 </form>
               )}

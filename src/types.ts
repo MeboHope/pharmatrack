@@ -175,7 +175,6 @@ export interface UserAccount {
   email: string;
   phone?: string;
   role: 'Admin' | 'Pharmacist' | 'Clinician';
-  passwordHash: string;
   isVerified: boolean;
   createdAt: string;
 }

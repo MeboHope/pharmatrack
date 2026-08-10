@@ -7,7 +7,6 @@ export const initialUsers: UserAccount[] = [
     email: 'sarah.jenkins@afyalinkpharmacy.co.ke',
     phone: '0712345678',
     role: 'Clinician',
-    passwordHash: 'Password123!',
     isVerified: true,
     createdAt: '2026-01-01',
   },
@@ -17,7 +16,6 @@ export const initialUsers: UserAccount[] = [
     email: 'john.doe@afyalinkpharmacy.co.ke',
     phone: '0787654321',
     role: 'Pharmacist',
-    passwordHash: 'Pharma2026!',
     isVerified: true,
     createdAt: '2026-01-15',
   }

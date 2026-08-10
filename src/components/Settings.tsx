@@ -2,13 +2,12 @@
 import React, { useState } from 'react';
 import { Settings as SettingsIcon, Save, Building2, CheckCircle2, Lock, Shield, KeyRound, User, Mail, AlertCircle, LogOut, ArrowDown } from 'lucide-react';
 import { PharmacySettings, UserAccount } from '../types';
+import { signIn, updatePassword } from '../lib/auth';
 
 interface SettingsProps {
   settings: PharmacySettings;
   onSaveSettings: (newSettings: PharmacySettings) => void;
   currentUser: UserAccount | null;
-  users: UserAccount[];
-  onUpdateUserPassword: (userId: string, newPass: string) => void;
   onOpenAuthModal: () => void;
 }
 
@@ -25,8 +24,6 @@ export const Settings: React.FC<SettingsProps> = ({
   settings, 
   onSaveSettings,
   currentUser,
-  users,
-  onUpdateUserPassword,
   onOpenAuthModal
 }) => {
   const [formData, setFormData] = useState<PharmacySettings>({ ...settings });
@@ -42,6 +39,7 @@ export const Settings: React.FC<SettingsProps> = ({
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,18 +48,13 @@ export const Settings: React.FC<SettingsProps> = ({
     setTimeout(() => setSavedSuccess(false), 3000);
   };
 
-  const handlePasswordChange = (e: React.FormEvent) => {
+  const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
     setPasswordSuccess('');
 
     if (!currentUser) {
       setPasswordError('No user is currently logged in. Please log in first.');
-      return;
-    }
-
-    if (currentPasswordInput !== currentUser.passwordHash) {
-      setPasswordError('Current password is incorrect.');
       return;
     }
 
@@ -75,12 +68,28 @@ export const Settings: React.FC<SettingsProps> = ({
       return;
     }
 
-    onUpdateUserPassword(currentUser.id, newPasswordInput);
-    setPasswordSuccess('Your password has been changed successfully!');
-    setCurrentPasswordInput('');
-    setNewPasswordInput('');
-    setConfirmPasswordInput('');
-    setTimeout(() => setPasswordSuccess(''), 4000);
+    setIsChangingPassword(true);
+    try {
+      // Re-authenticate so the current password is genuinely verified.
+      await signIn(currentUser.email, currentPasswordInput);
+      await updatePassword(newPasswordInput);
+
+      setPasswordSuccess('Your password has been changed successfully!');
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmPasswordInput('');
+      setTimeout(() => setPasswordSuccess(''), 4000);
+    } catch (err) {
+      setPasswordError(
+        err instanceof Error && err.message.toLowerCase().includes('credentials')
+          ? 'Current password is incorrect.'
+          : err instanceof Error
+            ? err.message
+            : 'Unable to change your password. Please try again.'
+      );
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   return (
@@ -352,14 +361,15 @@ export const Settings: React.FC<SettingsProps> = ({
               onClick={onOpenAuthModal}
               className="text-xs font-semibold text-[#22577A] hover:underline"
             >
-              Forgot current password? Reset via Email OTP →
+              Forgot current password? Reset via email →
             </button>
 
             <button
               type="submit"
-              className="px-5 py-2.5 text-xs font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center gap-2"
+              disabled={isChangingPassword}
+              className="px-5 py-2.5 text-xs font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60"
             >
-              <KeyRound className="w-4 h-4" /> Update Password
+              <KeyRound className="w-4 h-4" /> {isChangingPassword ? 'Updating...' : 'Update Password'}
             </button>
           </div>
         </form>
