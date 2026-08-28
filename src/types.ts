@@ -1,67 +1,69 @@
-export type TabType = 
-  | 'dashboard'
-  | 'inventory'
-  | 'dispensing'
-  | 'suppliers'
-  | 'patients'
-  | 'reports'
-  | 'stock-adjustments'
-  | 'settings';
 
-export type DrugCategory = 
-  | 'Antidiabetics'
-  | 'Antihypertensives'
-  | 'Antihistamines'
-  | 'Antimalarials'
-  | 'Antiretrovirals'
-  | 'Dermatological'
-  | 'Gastrointestinal'
-  | 'Ophthalmic'
-  | 'Respiratory'
-  | 'Vitamins & Supplements'
-  | 'Analgesics'
-  | 'Antibiotics'
-  | 'Other';
+export type TabType =
+  | "dashboard"
+  | "inventory"
+  | "dispensing"
+  | "suppliers"
+  | "patients"
+  | "reports"
+  | "stock-adjustments"
+  | "user-management"
+  | "settings";
 
-export type DrugFormulation = 
-  | 'Cream'
-  | 'Ointment'
-  | 'Gel'
-  | 'Drops'
-  | 'Inhaler'
-  | 'Injection'
-  | 'Powder'
-  | 'Suppository'
-  | 'Patch'
-  | 'Lotion'
-  | 'Solution'
-  | 'Tablets'
-  | 'Capsules';
+export type DrugCategory =
+  | "Antidiabetics"
+  | "Antihypertensives"
+  | "Antihistamines"
+  | "Antimalarials"
+  | "Antiretrovirals"
+  | "Dermatological"
+  | "Gastrointestinal"
+  | "Ophthalmic"
+  | "Respiratory"
+  | "Vitamins & Supplements"
+  | "Analgesics"
+  | "Antibiotics"
+  | "Other";
 
-export type HealthcareFrequency = 
-  | 'OD (Once daily)'
-  | 'BD / BID (Twice daily)'
-  | 'TID (Three times daily)'
-  | 'QID (Four times daily)'
-  | 'STAT (Immediately)'
-  | 'PRN (As needed)'
-  | 'Q4H (Every 4 hours)'
-  | 'Q6H (Every 6 hours)'
-  | 'Q8H (Every 8 hours)'
-  | 'Q12H (Every 12 hours)'
-  | 'ON (At night)';
+export type DrugFormulation =
+  | "Cream"
+  | "Ointment"
+  | "Gel"
+  | "Drops"
+  | "Inhaler"
+  | "Injection"
+  | "Powder"
+  | "Suppository"
+  | "Patch"
+  | "Lotion"
+  | "Solution"
+  | "Tablets"
+  | "Capsules";
 
-export type HealthcareRoute = 
-  | 'Oral'
-  | 'Topical'
-  | 'Intravenous (IV)'
-  | 'Intramuscular (IM)'
-  | 'Subcutaneous'
-  | 'Inhalation'
-  | 'Ophthalmic'
-  | 'Otic'
-  | 'Rectal'
-  | 'Sublingual';
+export type HealthcareFrequency =
+  | "OD (Once daily)"
+  | "BD / BID (Twice daily)"
+  | "TID (Three times daily)"
+  | "QID (Four times daily)"
+  | "STAT (Immediately)"
+  | "PRN (As needed)"
+  | "Q4H (Every 4 hours)"
+  | "Q6H (Every 6 hours)"
+  | "Q8H (Every 8 hours)"
+  | "Q12H (Every 12 hours)"
+  | "ON (At night)";
+
+export type HealthcareRoute =
+  | "Oral"
+  | "Topical"
+  | "Intravenous (IV)"
+  | "Intramuscular (IM)"
+  | "Subcutaneous"
+  | "Inhalation"
+  | "Ophthalmic"
+  | "Otic"
+  | "Rectal"
+  | "Sublingual";
 
 export interface Drug {
   id: string;
@@ -72,13 +74,17 @@ export interface Drug {
   formulation: DrugFormulation;
   batchNo: string;
   manufactureDate?: string;
-  expiryDate: string; // YYYY-MM-DD or DD/MM/YYYY
+  expiryDate: string;
   qty: number;
-  unit: string; // e.g. Capsules, Tablets
+  unit: string;
   buyingPrice: number;
   sellingPrice: number;
   markupPercent: number;
-  status: 'In Stock' | 'Low Stock' | 'Expired' | 'Out of Stock';
+  status:
+    | "In Stock"
+    | "Low Stock"
+    | "Expired"
+    | "Out of Stock";
   notes?: string;
   createdAt: string;
 }
@@ -106,7 +112,7 @@ export interface PatientRecord {
   phone: string;
   email?: string;
   age?: number;
-  gender?: 'Male' | 'Female' | 'Other';
+  gender?: "Male" | "Female" | "Other";
   address?: string;
   allergies?: string;
   totalVisits: number;
@@ -114,9 +120,12 @@ export interface PatientRecord {
 }
 
 export interface DispenseTransaction {
-  id: string; // TXN-0001
-  date: string; // YYYY-MM-DD HH:mm
-  patientType: 'Walk-in Patient' | 'Registered Patient';
+  id: string;
+  transactionNo?: string;
+  date: string;
+  patientType:
+    | "Walk-in Patient"
+    | "Registered Patient";
   patientName: string;
   phone?: string;
   clinicianName: string;
@@ -126,11 +135,14 @@ export interface DispenseTransaction {
   subtotal: number;
   discount: number;
   totalAmount: number;
-  paymentMethod: 'Cash' | 'M-Pesa';
+  paymentMethod: "Cash" | "M-Pesa";
   cashTendered?: number;
   changeAmount?: number;
-  mpesaCode?: string; // e.g. last 4 digits QK89 or full ref
-  status: 'Completed' | 'Cancelled' | 'Pending';
+  mpesaCode?: string;
+  status:
+    | "Completed"
+    | "Cancelled"
+    | "Pending";
 }
 
 export interface Supplier {
@@ -151,7 +163,11 @@ export interface StockAdjustment {
   batchNo: string;
   previousQty: number;
   adjustedQty: number;
-  type: 'Loss / Damage' | 'Expiry Removal' | 'Audit Reconciliation' | 'Return to Supplier';
+  type:
+    | "Loss / Damage"
+    | "Expiry Removal"
+    | "Audit Reconciliation"
+    | "Return to Supplier";
   reason: string;
   adjustedBy: string;
 }
@@ -174,9 +190,10 @@ export interface UserAccount {
   name: string;
   email: string;
   phone?: string;
-  role: 'Admin' | 'Pharmacist' | 'Clinician';
-  passwordHash: string;
+  role:
+    | "Admin"
+    | "Pharmacist"
+    | "Clinician";
   isVerified: boolean;
-  createdAt: string;
+  createdAt?: string;
 }
-

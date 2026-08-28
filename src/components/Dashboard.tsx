@@ -1,30 +1,40 @@
-import React from 'react';
-import { 
-  AlertTriangle, 
-  Package, 
-  Banknote, 
-  Clock, 
-  AlertCircle, 
-  PlusCircle, 
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  AlertCircle,
+  AlertTriangle,
   ArrowRight,
+  Banknote,
+  Clock,
+  Package,
+  PlusCircle,
   ShoppingCart,
-  TrendingUp,
-  BarChart2
-} from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
+} from "lucide-react";
+
+import {
   PieChart,
   Pie,
-  Cell
-} from 'recharts';
-import { Drug, DispenseTransaction, PharmacySettings, TabType } from '../types';
-import { SalesOverviewGraph } from './SalesOverviewGraph';
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+import type {
+  DispenseTransaction,
+  Drug,
+  PharmacySettings,
+  TabType,
+} from "../types";
+
+import { SalesOverviewGraph } from "./SalesOverviewGraph";
+import {
+  getDashboard,
+  type DashboardSummary,
+} from "../services/dashboard";
 
 interface DashboardProps {
   drugs: Drug[];
@@ -36,6 +46,27 @@ interface DashboardProps {
   onRecordAdjustment: () => void;
 }
 
+const PIE_COLORS = [
+  "#0F766E",
+  "#1D4ED8",
+  "#F59E0B",
+  "#8B5CF6",
+  "#EC4899",
+  "#06B6D4",
+  "#10B981",
+];
+
+const EMPTY_SUMMARY: DashboardSummary = {
+  totalProducts: 0,
+  totalStockValue: 0,
+  expiredCount: 0,
+  outOfStockCount: 0,
+  lowStockCount: 0,
+  expiringSoonCount: 0,
+  totalSales: 0,
+  transactionCount: 0,
+};
+
 export const Dashboard: React.FC<DashboardProps> = ({
   drugs = [],
   transactions = [],
@@ -45,117 +76,307 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onReceiveStock,
   onRecordAdjustment,
 }) => {
-  // Calculations
-  const safeDrugs = drugs || [];
-  const safeTransactions = transactions || [];
+  const safeDrugs = drugs ?? [];
+  const safeTransactions = transactions ?? [];
 
-  const expiredCount = safeDrugs.filter(d => d.status === 'Expired').length;
-  const outOfStockCount = safeDrugs.filter(d => d.qty === 0 || d.status === 'Out of Stock').length;
-  const lowStockCount = safeDrugs.filter(d => d.qty > 0 && d.qty <= (settings?.reorderAlertLevel || 10)).length;
+  const [serverSummary, setServerSummary] =
+    useState<DashboardSummary>(EMPTY_SUMMARY);
 
-  const totalProducts = safeDrugs.length;
-  const totalStockValue = safeDrugs.reduce((acc, d) => acc + ((d.buyingPrice || 0) * (d.qty || 0)), 0);
+  const [dashboardLoading, setDashboardLoading] =
+    useState(true);
 
-  // Expiring in < 90 days calculation
-  const now = new Date();
-  const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
-  const expiringSoonCount = safeDrugs.filter(d => {
-    if (d.status === 'Expired') return false;
-    const exp = new Date(d.expiryDate);
-    const diff = exp.getTime() - now.getTime();
-    return diff > 0 && diff <= ninetyDaysInMs;
-  }).length;
+  const [dashboardError, setDashboardError] =
+    useState("");
 
-  // Chart 2: Inventory by Category Pie Chart
-  const PIE_COLORS = [
-    '#0F766E', // Green
-    '#1D4ED8', // Blue
-    '#F59E0B', // Amber / Orange
-    '#8B5CF6', // Purple
-    '#EC4899', // Pink
-    '#06B6D4', // Cyan
-    '#10B981', // Emerald
-  ];
+  useEffect(() => {
+    let mounted = true;
 
-  const categoryData = React.useMemo(() => {
-    const counts: Record<string, number> = {};
-    safeDrugs.forEach((d) => {
-      const cat = d.category || 'Other';
-      counts[cat] = (counts[cat] || 0) + 1;
+    const loadDashboard = async () => {
+      setDashboardLoading(true);
+      setDashboardError("");
+
+      try {
+        const dashboard = await getDashboard();
+
+        if (!mounted) return;
+
+        setServerSummary({
+          ...EMPTY_SUMMARY,
+          ...dashboard.summary,
+        });
+      } catch (error) {
+        if (!mounted) return;
+
+        console.error(
+          "Failed to load dashboard:",
+          error,
+        );
+
+        setDashboardError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load dashboard data.",
+        );
+      } finally {
+        if (mounted) {
+          setDashboardLoading(false);
+        }
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /*
+   * Use the server/database values when available.
+   * The frontend values remain as a safe fallback while
+   * the backend is empty or unavailable.
+   */
+
+  const localExpiredCount = useMemo(
+    () =>
+      safeDrugs.filter(
+        (drug) => drug.status === "Expired",
+      ).length,
+    [safeDrugs],
+  );
+
+  const localOutOfStockCount = useMemo(
+    () =>
+      safeDrugs.filter(
+        (drug) =>
+          drug.qty === 0 ||
+          drug.status === "Out of Stock",
+      ).length,
+    [safeDrugs],
+  );
+
+  const localLowStockCount = useMemo(
+    () =>
+      safeDrugs.filter(
+        (drug) =>
+          drug.qty > 0 &&
+          drug.qty <=
+            (settings?.reorderAlertLevel || 10),
+      ).length,
+    [safeDrugs, settings],
+  );
+
+  const localStockValue = useMemo(
+    () =>
+      safeDrugs.reduce(
+        (total, drug) =>
+          total +
+          (drug.buyingPrice || 0) *
+            (drug.qty || 0),
+        0,
+      ),
+    [safeDrugs],
+  );
+
+  const localExpiringSoonCount = useMemo(() => {
+    const now = new Date();
+    const alertDays =
+      settings?.expiryAlertDays || 90;
+
+    const alertMilliseconds =
+      alertDays *
+      24 *
+      60 *
+      60 *
+      1000;
+
+    return safeDrugs.filter((drug) => {
+      if (drug.status === "Expired") {
+        return false;
+      }
+
+      const expiry = new Date(
+        drug.expiryDate,
+      );
+
+      const difference =
+        expiry.getTime() -
+        now.getTime();
+
+      return (
+        difference > 0 &&
+        difference <= alertMilliseconds
+      );
+    }).length;
+  }, [safeDrugs, settings]);
+
+  const totalProducts =
+    serverSummary.totalProducts ||
+    safeDrugs.length;
+
+  const totalStockValue =
+    serverSummary.totalStockValue ||
+    localStockValue;
+
+  const expiredCount =
+    serverSummary.expiredCount ||
+    localExpiredCount;
+
+  const outOfStockCount =
+    serverSummary.outOfStockCount ||
+    localOutOfStockCount;
+
+  const lowStockCount =
+    serverSummary.lowStockCount ||
+    localLowStockCount;
+
+  const expiringSoonCount =
+    serverSummary.expiringSoonCount ||
+    localExpiringSoonCount;
+
+  const categoryData = useMemo(() => {
+    const counts: Record<
+      string,
+      number
+    > = {};
+
+    safeDrugs.forEach((drug) => {
+      const category =
+        drug.category || "Other";
+
+      counts[category] =
+        (counts[category] || 0) + 1;
     });
 
-    const sorted = Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+    const sorted = Object.entries(
+      counts,
+    )
+      .map(([name, value]) => ({
+        name,
+        value,
+      }))
+      .sort(
+        (a, b) => b.value - a.value,
+      );
 
     if (sorted.length <= 5) {
       return sorted;
     }
 
-    const top4 = sorted.slice(0, 4);
-    const otherVal = sorted.slice(4).reduce((acc, curr) => acc + curr.value, 0);
-    return [...top4, { name: 'Other', value: otherVal }];
-  }, [drugs]);
+    const topFour =
+      sorted.slice(0, 4);
+
+    const otherValue =
+      sorted
+        .slice(4)
+        .reduce(
+          (total, item) =>
+            total + item.value,
+          0,
+        );
+
+    return [
+      ...topFour,
+      {
+        name: "Other",
+        value: otherValue,
+      },
+    ];
+  }, [safeDrugs]);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      {/* Header Banner */}
+
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard Overview</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Dashboard Overview
+          </h1>
+
           <p className="text-sm text-slate-500 font-medium mt-1">
-            Welcome to <span className="text-[#22577A] font-semibold">{settings.pharmacyName}</span>
+            Welcome to{" "}
+            <span className="text-[#22577A] font-semibold">
+              {settings?.pharmacyName ||
+                "PharmaTrack"}
+            </span>
           </p>
         </div>
+
         <div className="flex flex-wrap items-center gap-3">
           <button
-            id="btn-quick-dispense"
+            type="button"
             onClick={onQuickDispense}
-            className="px-4 py-2 text-sm font-semibold text-white bg-[#22577A] hover:bg-[#1a4460] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+            className="px-4 py-2 text-sm font-semibold text-white bg-[#22577A] hover:bg-[#1a4460] rounded-lg transition-colors shadow-sm flex items-center gap-2"
           >
             <ShoppingCart className="w-4 h-4" />
             Quick Dispense
           </button>
+
           <button
-            id="btn-receive-stock"
+            type="button"
             onClick={onReceiveStock}
-            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-xs flex items-center gap-2 cursor-pointer"
+            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-sm flex items-center gap-2"
           >
             <PlusCircle className="w-4 h-4 text-[#22577A]" />
             Receive Stock
           </button>
+
           <button
-            id="btn-record-adjustment"
+            type="button"
             onClick={onRecordAdjustment}
-            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-xs flex items-center gap-2 cursor-pointer"
+            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-sm"
           >
             Record Adjustment
           </button>
         </div>
       </div>
 
-      {/* Critical Action Required Box - EXACT AS SPECIFIED: Pure #D71D2D with white text, no outline */}
+      {/* Backend loading indicator */}
+      {dashboardLoading && (
+        <div className="bg-sky-50 border border-sky-200 text-sky-800 rounded-xl px-4 py-3 text-xs font-medium">
+          Loading live dashboard data...
+        </div>
+      )}
+
+      {/* Backend error */}
+      {dashboardError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-xs">
+          Live dashboard data could not be loaded.
+          Showing available local application data.
+        </div>
+      )}
+
+      {/* Critical Action */}
       {expiredCount > 0 && (
-        <div 
+        <div
           className="p-4 rounded-xl text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4"
-          style={{ backgroundColor: '#D71D2D' }}
+          style={{
+            backgroundColor: "#D71D2D",
+          }}
         >
           <div className="flex items-start md:items-center gap-3">
             <div className="p-2 rounded-lg bg-white/10 shrink-0">
               <AlertTriangle className="w-5 h-5 text-white" />
             </div>
+
             <div>
-              <div className="flex items-center gap-2 font-bold text-sm tracking-wide uppercase">
-                <span>Critical Action Required</span>
+              <div className="font-bold text-sm tracking-wide uppercase">
+                Critical Action Required
               </div>
+
               <p className="text-sm text-white/95 mt-0.5">
-                {expiredCount} item(s) have expired. Please check the inventory to resolve these issues.
+                {expiredCount} item(s) have expired.
+                Please check the inventory.
               </p>
             </div>
           </div>
+
           <button
-            id="btn-view-inventory-expired"
-            onClick={() => setActiveTab('inventory')}
+            type="button"
+            onClick={() =>
+              setActiveTab("inventory")
+            }
             className="px-4 py-2 text-xs font-bold text-[#D71D2D] bg-white hover:bg-slate-100 rounded-lg transition-colors shrink-0 shadow-sm"
           >
             View Inventory
@@ -163,81 +384,131 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* 4 Metric Cards */}
+      {/* Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Products */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+
+        {/* Products */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Total Products</span>
+            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+              Total Products
+            </span>
+
             <div className="p-2.5 rounded-lg bg-slate-100 text-[#22577A]">
               <Package className="w-5 h-5" />
             </div>
           </div>
+
           <div className="mt-4">
-            <div className="text-2xl font-bold text-slate-900">{totalProducts}</div>
-            <p className="text-xs text-slate-500 mt-1">Active items in catalog</p>
+            <div className="text-2xl font-bold text-slate-900">
+              {totalProducts}
+            </div>
+
+            <p className="text-xs text-slate-500 mt-1">
+              Active items in catalog
+            </p>
           </div>
         </div>
 
         {/* Stock Value */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Stock Value</span>
+            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+              Stock Value
+            </span>
+
             <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-600">
               <Banknote className="w-5 h-5" />
             </div>
           </div>
+
           <div className="mt-4">
             <div className="text-2xl font-bold text-slate-900">
-              {settings.currency} {totalStockValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {settings.currency}{" "}
+              {Number(
+                totalStockValue,
+              ).toLocaleString(
+                "en-US",
+                {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                },
+              )}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Total value at buying price</p>
+
+            <p className="text-xs text-slate-500 mt-1">
+              Total value at buying price
+            </p>
           </div>
         </div>
 
-        {/* Expiring Soon */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+        {/* Expiring */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Expiring Soon</span>
+            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+              Expiring Soon
+            </span>
+
             <div className="p-2.5 rounded-lg bg-amber-50 text-amber-600">
               <Clock className="w-5 h-5" />
             </div>
           </div>
+
           <div className="mt-4">
-            <div className="text-2xl font-bold text-slate-900">{expiringSoonCount || 1}</div>
-            <p className="text-xs text-slate-500 mt-1">Items expiring in &lt; 90 days</p>
+            <div className="text-2xl font-bold text-slate-900">
+              {expiringSoonCount}
+            </div>
+
+            <p className="text-xs text-slate-500 mt-1">
+              Items within expiry alert period
+            </p>
           </div>
         </div>
 
-        {/* Below Reorder Level */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+        {/* Reorder */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Below Reorder Level</span>
+            <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+              Below Reorder Level
+            </span>
+
             <div className="p-2.5 rounded-lg bg-rose-50 text-[#D71D2D]">
               <AlertCircle className="w-5 h-5" />
             </div>
           </div>
+
           <div className="mt-4">
-            <div className="text-2xl font-bold text-slate-900">{lowStockCount || 4}</div>
-            <p className="text-xs text-slate-500 mt-1">Items needing replenishment</p>
+            <div className="text-2xl font-bold text-slate-900">
+              {lowStockCount}
+            </div>
+
+            <p className="text-xs text-slate-500 mt-1">
+              Items needing replenishment
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Graphs Section */}
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Graph 1: Sales Overview */}
-        <SalesOverviewGraph transactions={safeTransactions} settings={settings} selectId="select-sales-overview-dashboard" />
 
-        {/* Graph 2: Inventory by Category */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">Inventory by Category</h2>
-          </div>
+        <SalesOverviewGraph
+          transactions={safeTransactions}
+          settings={settings}
+          selectId="select-sales-overview-dashboard"
+        />
+
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          <h2 className="text-base font-bold text-slate-900">
+            Inventory by Category
+          </h2>
 
           <div className="h-64 w-full flex flex-col items-center justify-between py-2">
             <div className="h-44 w-full">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+              >
                 <PieChart>
                   <Pie
                     data={categoryData}
@@ -248,69 +519,79 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     paddingAngle={4}
                     dataKey="value"
                   >
-                    {categoryData.map((_, index) => (
-                      <Cell 
-                        key={`cell-${index}`} 
-                        fill={PIE_COLORS[index % PIE_COLORS.length]} 
-                        stroke="#ffffff"
-                        strokeWidth={2}
-                      />
-                    ))}
+                    {categoryData.map(
+                      (_, index) => (
+                        <Cell
+                          key={`category-${index}`}
+                          fill={
+                            PIE_COLORS[
+                              index %
+                                PIE_COLORS.length
+                            ]
+                          }
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                        />
+                      ),
+                    )}
                   </Pie>
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const item = payload[0];
-                        const categoryName = item.name;
-                        const count = item.value;
-                        const idx = categoryData.findIndex((c) => c.name === categoryName);
-                        const color = (item.payload && item.payload.fill) || PIE_COLORS[idx >= 0 ? idx % PIE_COLORS.length : 0];
 
-                        return (
-                          <div className="bg-white border border-slate-200 px-3 py-2 rounded-lg shadow-md text-xs font-semibold flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                            <span style={{ color }}>
-                              {categoryName}: {count}
-                            </span>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
+                  <Tooltip />
                 </PieChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Legend at bottom matching uploaded image */}
             <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-slate-600 font-medium px-2">
-              {categoryData.map((item, idx) => (
-                <div key={item.name} className="flex items-center gap-1.5">
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{ backgroundColor: PIE_COLORS[idx % PIE_COLORS.length] }}
-                  />
-                  <span>{item.name} ({item.value})</span>
-                </div>
-              ))}
+              {categoryData.map(
+                (item, index) => (
+                  <div
+                    key={item.name}
+                    className="flex items-center gap-1.5"
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0"
+                      style={{
+                        backgroundColor:
+                          PIE_COLORS[
+                            index %
+                              PIE_COLORS.length
+                          ],
+                      }}
+                    />
+
+                    <span>
+                      {item.name} ({item.value})
+                    </span>
+                  </div>
+                ),
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Recent Transactions Under The Graphs (Exact as prompt annotation) */}
+      {/* Recent Transactions */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Recent Transactions</h2>
-            <p className="text-xs text-slate-500">Latest prescription dispenses & POS sales</p>
+            <h2 className="text-base font-bold text-slate-900">
+              Recent Transactions
+            </h2>
+
+            <p className="text-xs text-slate-500">
+              Latest prescription dispenses & POS sales
+            </p>
           </div>
+
           <button
-            id="btn-view-all-transactions"
-            onClick={() => setActiveTab('dispensing')}
+            type="button"
+            onClick={() =>
+              setActiveTab("dispensing")
+            }
             className="text-xs font-semibold text-[#22577A] hover:text-[#1a4460] flex items-center gap-1"
           >
-            View All <ArrowRight className="w-3.5 h-3.5" />
+            View All
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -318,40 +599,107 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-semibold uppercase tracking-wider">
-                <th className="py-3.5 px-6">ID</th>
-                <th className="py-3.5 px-6">DATE</th>
-                <th className="py-3.5 px-6">PATIENT</th>
-                <th className="py-3.5 px-6">AMOUNT</th>
-                <th className="py-3.5 px-6">PAYMENT</th>
-                <th className="py-3.5 px-6">STATUS</th>
+                <th className="py-3.5 px-6">
+                  ID
+                </th>
+
+                <th className="py-3.5 px-6">
+                  DATE
+                </th>
+
+                <th className="py-3.5 px-6">
+                  PATIENT
+                </th>
+
+                <th className="py-3.5 px-6">
+                  AMOUNT
+                </th>
+
+                <th className="py-3.5 px-6">
+                  PAYMENT
+                </th>
+
+                <th className="py-3.5 px-6">
+                  STATUS
+                </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-              {safeTransactions.slice(0, 5).map((txn) => (
-                <tr key={txn.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-4 px-6 font-semibold text-[#22577A]">{txn.id}</td>
-                  <td className="py-4 px-6 text-slate-600 text-xs">{txn.date}</td>
-                  <td className="py-4 px-6 font-medium text-slate-900">{txn.patientName}</td>
-                  <td className="py-4 px-6 font-semibold text-slate-900">
-                    {settings.currency} {(txn.totalAmount || 0).toFixed(2)}
-                  </td>
-                  <td className="py-4 px-6">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-800">
-                      {txn.paymentMethod}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      Completed
-                    </span>
+              {safeTransactions
+                .slice(0, 5)
+                .map((transaction) => (
+                  <tr
+                    key={transaction.id}
+                    className="hover:bg-slate-50/80 transition-colors"
+                  >
+                    <td className="py-4 px-6 font-semibold text-[#22577A]">
+                      {transaction.id}
+                    </td>
+
+                    <td className="py-4 px-6 text-slate-600 text-xs">
+                      {transaction.date}
+                    </td>
+
+                    <td className="py-4 px-6 font-medium text-slate-900">
+                      {
+                        transaction.patientName
+                      }
+                    </td>
+
+                    <td className="py-4 px-6 font-semibold text-slate-900">
+                      {settings.currency}{" "}
+                      {Number(
+                        transaction.totalAmount ||
+                          0,
+                      ).toFixed(2)}
+                    </td>
+
+                    <td className="py-4 px-6">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-800">
+                        {
+                          transaction.paymentMethod
+                        }
+                      </span>
+                    </td>
+
+                    <td className="py-4 px-6">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        {transaction.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+
+              {safeTransactions.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-slate-400"
+                  >
+                    No transactions recorded yet.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Backend status */}
+      {!dashboardLoading &&
+        !dashboardError && (
+          <div className="text-[11px] text-emerald-600 font-medium">
+            Dashboard data synchronized with the
+            PharmaTrack server.
+          </div>
+        )}
+
+      {/* Avoid unused-variable warnings */}
+      {void outOfStockCount}
     </div>
   );
 };
+
+export default Dashboard;

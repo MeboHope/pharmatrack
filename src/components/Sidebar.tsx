@@ -1,142 +1,209 @@
-// src/components/Sidebar.tsx
-import React, { useState } from 'react';
-import { 
-  LayoutDashboard, 
-  Pill, 
-  ShoppingCart, 
-  Truck, 
-  Users, 
-  BarChart3, 
-  SlidersHorizontal, 
+
+import React from "react";
+
+import {
+  LayoutDashboard,
+  Package,
+  Pill,
+  Truck,
+  Users,
+  BarChart3,
+  ClipboardList,
   Settings,
-  Stethoscope,
-  UserCheck,
-  Lock,
   LogOut,
-  User
-} from 'lucide-react';
-import { TabType, PharmacySettings, UserAccount } from '../types';
+  ShieldCheck,
+} from "lucide-react";
+
+import type {
+  PharmacySettings,
+  TabType,
+  UserAccount,
+} from "../types";
 
 interface SidebarProps {
   activeTab: TabType;
-  setActiveTab: (tab: TabType) => void;
+  setActiveTab: (
+    tab: TabType,
+  ) => void;
   settings: PharmacySettings;
-  currentUser: UserAccount | null;
+  currentUser: UserAccount;
   onOpenAuthModal: () => void;
   onLogoutClick: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ 
-  activeTab, 
-  setActiveTab, 
+interface NavigationItem {
+  id: TabType;
+  label: string;
+  icon: React.ComponentType<{
+    className?: string;
+  }>;
+  adminOnly?: boolean;
+}
+
+export const Sidebar: React.FC<
+  SidebarProps
+> = ({
+  activeTab,
+  setActiveTab,
   settings,
   currentUser,
   onOpenAuthModal,
-  onLogoutClick
+  onLogoutClick,
 }) => {
-  const [logoError, setLogoError] = useState(false);
-
-  const navItems: { id: TabType; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
-    { id: 'inventory', label: 'Inventory', icon: <Pill className="w-5 h-5" /> },
-    { id: 'dispensing', label: 'Dispensing', icon: <ShoppingCart className="w-5 h-5" /> },
-    { id: 'suppliers', label: 'Suppliers', icon: <Truck className="w-5 h-5" /> },
-    { id: 'patients', label: 'Patients', icon: <Users className="w-5 h-5" /> },
-    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-5 h-5" /> },
-    { id: 'stock-adjustments', label: 'Stock adjustments', icon: <SlidersHorizontal className="w-5 h-5" /> },
-    { id: 'settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
+  const navigationItems: NavigationItem[] = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+    },
+    {
+      id: "inventory",
+      label: "Inventory",
+      icon: Package,
+    },
+    {
+      id: "dispensing",
+      label: "Dispensing",
+      icon: Pill,
+    },
+    {
+      id: "suppliers",
+      label: "Suppliers",
+      icon: Truck,
+    },
+    {
+      id: "patients",
+      label: "Patients",
+      icon: Users,
+    },
+    {
+      id: "reports",
+      label: "Reports",
+      icon: BarChart3,
+    },
+    {
+      id: "stock-adjustments",
+      label: "Stock Adjustments",
+      icon: ClipboardList,
+    },
+    {
+      id: "user-management",
+      label: "User Management",
+      icon: ShieldCheck,
+      adminOnly: true,
+    },
+    {
+      id: "settings",
+      label: "Settings",
+      icon: Settings,
+    },
   ];
 
-  return (
-    <aside 
-      className="w-52 min-h-screen text-white flex flex-col justify-between shrink-0 shadow-lg no-print"
-      style={{ backgroundColor: '#22577A' }}
-    >
-      <div>
-        {/* Header App Branding */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('dashboard')}
-          className="w-full text-left p-4 border-b border-white/10 flex items-center gap-2.5 hover:bg-white/5 transition-colors cursor-pointer group"
-          title="Go to Dashboard"
-        >
-          {!logoError ? (
-            <img 
-              src={settings.logoUrl || '/logo/logo.png'} 
-              alt="PharmaTrack Logo" 
-              className="max-w-[36px] max-h-[36px] w-auto h-auto object-contain shrink-0"
-              onError={() => setLogoError(true)}
-            />
-          ) : (
-            <div className="w-9 h-9 rounded-xl bg-[#57CC99] flex items-center justify-center text-[#22577A] font-bold shadow-md shrink-0">
-              <Pill className="w-5 h-5 stroke-[2.5]" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <h1 className="text-lg font-bold tracking-tight text-white leading-tight truncate group-hover:text-[#57CC99] transition-colors">PharmaTrack</h1>
-            <p className="text-[11px] text-white/70 font-medium truncate">Inventory & POS System</p>
-          </div>
-        </button>
+  const visibleItems =
+    navigationItems.filter(
+      (item) =>
+        !item.adminOnly ||
+        currentUser.role === "Admin",
+    );
 
-        {/* Navigation items */}
-        <nav className="p-3 space-y-1">
-          <div className="px-2.5 pb-1.5 text-[10px] font-semibold text-white/60 uppercase tracking-wider">
-            Menu Options
+  return (
+    <aside className="w-64 min-h-screen bg-[#22577A] text-white flex flex-col shrink-0">
+      <div className="p-5 border-b border-white/10">
+        <div className="flex items-center gap-3">
+          <img
+            src={
+              settings.logoUrl ||
+              "/logo/logo.png"
+            }
+            alt="PharmaTrack Logo"
+            className="w-10 h-10 object-contain shrink-0"
+          />
+
+          <div className="min-w-0">
+            <h1 className="font-bold text-lg truncate">
+              {settings.pharmacyName ||
+                "PharmaTrack"}
+            </h1>
+
+            <p className="text-[10px] text-white/70 truncate">
+              {settings.tagline ||
+                "Pharmacy Management System"}
+            </p>
           </div>
-          {navItems.map((item) => {
-            const isActive = activeTab === item.id;
+        </div>
+      </div>
+
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        {visibleItems.map(
+          (item) => {
+            const Icon = item.icon;
+
+            const isActive =
+              activeTab === item.id;
+
             return (
               <button
                 key={item.id}
-                id={`nav-tab-${item.id}`}
-                onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-150 text-left ${
+                type="button"
+                onClick={() =>
+                  setActiveTab(item.id)
+                }
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
                   isActive
-                    ? 'bg-white text-[#22577A] shadow-sm transform translate-x-0.5'
-                    : 'text-white/85 hover:bg-white/10 hover:text-white'
+                    ? "bg-white text-[#22577A] shadow-sm"
+                    : "text-white/80 hover:bg-white/10 hover:text-white"
                 }`}
               >
-                <span className={isActive ? 'text-[#22577A]' : 'text-white/80'}>
-                  {item.icon}
+                <Icon className="w-4 h-4 shrink-0" />
+
+                <span className="truncate">
+                  {item.label}
                 </span>
-                <span className="truncate">{item.label}</span>
               </button>
             );
-          })}
-        </nav>
-      </div>
+          },
+        )}
+      </nav>
 
-      {/* Footer Logout Option */}
-      <div className="p-3 m-2.5 rounded-xl bg-black/20 border border-white/10 text-xs text-white/90">
+      <div className="p-3 border-t border-white/10">
+        <button
+          type="button"
+          onClick={onOpenAuthModal}
+          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center shrink-0">
+              <span className="text-sm font-bold">
+                {currentUser.name
+                  .charAt(0)
+                  .toUpperCase()}
+              </span>
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-xs font-bold truncate">
+                {currentUser.name}
+              </p>
+
+              <p className="text-[10px] text-white/60 truncate">
+                {currentUser.role}
+              </p>
+            </div>
+          </div>
+        </button>
+
         <button
           type="button"
           onClick={onLogoutClick}
-          className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/10 transition-all group cursor-pointer"
-          title="Click to Log Out of PharmaTrack"
+          className="w-full mt-2 flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-white/80 hover:bg-rose-500/20 hover:text-white transition-colors"
         >
-          {/* Small white circle with adaptive initials */}
-          <div 
-            className="w-7 h-7 rounded-full bg-white text-[#22577A] flex items-center justify-center text-xs shrink-0 shadow-xs leading-none"
-            style={{ fontFamily: 'Montserrat, sans-serif', fontWeight: 700 }}
-          >
-            {(() => {
-              const name = currentUser ? currentUser.name : (settings.clinicianName || settings.pharmacyName);
-              if (!name) return 'SJ';
-              const clean = name.replace(/^(Dr\.|Mr\.|Mrs\.|Ms\.|Prof\.|Doctor)\s+/i, '').trim();
-              const parts = clean.split(/\s+/).filter(Boolean);
-              if (parts.length === 0) return 'SJ';
-              if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-              return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-            })()}
-          </div>
+          <LogOut className="w-4 h-4" />
 
-          <div className="flex items-center gap-1.5 text-xs font-bold text-white shrink-0">
-            <span className="text-white">Log out</span>
-            <LogOut className="w-4 h-4 text-white stroke-[2.2] transform group-hover:translate-x-0.5 transition-transform" />
-          </div>
+          <span>Log Out</span>
         </button>
       </div>
     </aside>
   );
 };
 
+export default Sidebar;

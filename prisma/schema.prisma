@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  PHARMACIST
+  CLINICIAN
+}
+
+enum DrugStatus {
+  IN_STOCK
+  LOW_STOCK
+  EXPIRED
+  OUT_OF_STOCK
+}
+
+enum PatientGender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PatientType {
+  WALK_IN
+  REGISTERED
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+}
+
+enum TransactionStatus {
+  COMPLETED
+  CANCELLED
+  PENDING
+}
+
+enum AdjustmentType {
+  LOSS_DAMAGE
+  EXPIRY_REMOVAL
+  AUDIT_RECONCILIATION
+  RETURN_TO_SUPPLIER
+}
+
+enum HealthcareFrequency {
+  OD
+  BD_BID
+  TID
+  QID
+  STAT
+  PRN
+  Q4H
+  Q6H
+  Q8H
+  Q12H
+  ON
+}
+
+enum HealthcareRoute {
+  ORAL
+  TOPICAL
+  INTRAVENOUS
+  INTRAMUSCULAR
+  SUBCUTANEOUS
+  INHALATION
+  OPHTHALMIC
+  OTIC
+  RECTAL
+  SUBLINGUAL
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  role         UserRole @default(PHARMACIST)
+  passwordHash String
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transactions DispenseTransaction[]
+  adjustments  StockAdjustment[]
+  auditLogs AuditLog[]
+}
+
+model PharmacySettings {
+  id               String   @id @default(cuid())
+  pharmacyName     String
+  tagline          String?
+  address          String?
+  phone            String?
+  email            String?
+  currency         String   @default("KES")
+  clinicianName    String?
+  expiryAlertDays  Int      @default(90)
+  reorderAlertLevel Int     @default(10)
+  logoUrl          String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Drug {
+  id             String     @id @default(cuid())
+  code           String     @unique
+  name           String
+  genericName    String
+  category       String
+  formulation    String
+  batchNo        String
+  manufactureDate DateTime?
+  expiryDate     DateTime
+  qty            Int        @default(0)
+  unit           String
+  buyingPrice    Decimal    @db.Decimal(12, 2)
+  sellingPrice   Decimal    @db.Decimal(12, 2)
+  markupPercent  Decimal    @db.Decimal(8, 2)
+  status         DrugStatus @default(IN_STOCK)
+  notes          String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  prescriptionItems PrescriptionItem[]
+}
+
+model Patient {
+  id          String        @id @default(cuid())
+  name        String
+  phone       String
+  email       String?
+  age         Int?
+  gender      PatientGender?
+  address     String?
+  allergies   String?
+  totalVisits Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  transactions DispenseTransaction[]
+
+  @@index([phone])
+  @@index([name])
+}
+
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String
+  contactPerson String
+  phone        String
+  email        String
+  address      String
+  leadTimeDays Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model DispenseTransaction {
+  id              String            @id @default(cuid())
+  transactionNo   String            @unique
+  date            DateTime          @default(now())
+  patientType     PatientType
+  patientName     String
+  phone           String?
+  clinicianName   String
+  prescriptionDate DateTime?
+  diagnosis       String?
+  subtotal        Decimal           @db.Decimal(12, 2)
+  discount        Decimal           @db.Decimal(12, 2) @default(0)
+  totalAmount     Decimal           @db.Decimal(12, 2)
+  paymentMethod   PaymentMethod
+  cashTendered    Decimal?          @db.Decimal(12, 2)
+  changeAmount    Decimal?          @db.Decimal(12, 2)
+  mpesaCode       String?
+  status          TransactionStatus  @default(COMPLETED)
+  createdAt       DateTime          @default(now())
+
+  patientId String?
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  userId String?
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  items PrescriptionItem[]
+
+  @@index([date])
+  @@index([patientId])
+}
+
+model PrescriptionItem {
+  id                 String              @id @default(cuid())
+  drugId             String
+  drugCode           String
+  drugName           String
+  batchNo            String
+  expiryDate         DateTime
+  availableQty       Int
+  qty                Int
+  unitPrice          Decimal             @db.Decimal(12, 2)
+  frequency          HealthcareFrequency
+  route              HealthcareRoute
+  duration           Int
+  durationUnit       String
+  specialInstructions String?
+  lineTotal          Decimal             @db.Decimal(12, 2)
+
+  transactionId String
+  transaction   DispenseTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  drug Drug @relation(fields: [drugId], references: [id], onDelete: Restrict)
+
+  @@index([drugId])
+  @@index([transactionId])
+}
+
+model StockAdjustment {
+  id           String         @id @default(cuid())
+  date         DateTime       @default(now())
+  drugId       String
+  drugName     String
+  batchNo      String
+  previousQty  Int
+  adjustedQty  Int
+  type         AdjustmentType
+  reason       String
+  adjustedBy   String
+  createdAt    DateTime       @default(now())
+
+  userId String?
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([drugId])
+  @@index([date])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  userId String?
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([entity])
+  @@index([userId])
+}

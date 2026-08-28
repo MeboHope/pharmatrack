@@ -1,474 +1,871 @@
-import React, { useState, useEffect } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { Dashboard } from './components/Dashboard';
-import { Inventory } from './components/Inventory';
-import { AddDrugModal } from './components/AddDrugModal';
-import { AuthModal } from './components/AuthModal';
-import { LandingScreen } from './components/LandingScreen';
-import { LogoutModal } from './components/LogoutModal';
-import { DispenseTransaction, Drug, PatientRecord, PharmacySettings, StockAdjustment, Supplier, TabType, UserAccount } from './types';
-import { 
-  initialDrugs, 
-  initialTransactions, 
-  initialPatients, 
-  initialSuppliers, 
-  initialAdjustments, 
-  initialSettings,
-  initialUsers
-} from './data/mockData';
-import { Dispensing } from './components/Dispensing';
-import { Suppliers } from './components/Suppliers';
-import { Patients } from './components/Patients';
-import { Reports } from './components/Reports';
-import { StockAdjustments } from './components/StockAdjustments';
-import { Settings } from './components/Settings';
+import React, { useEffect, useState } from "react";
+
+import { Sidebar } from "./components/Sidebar";
+import { Dashboard } from "./components/Dashboard";
+import { Inventory } from "./components/Inventory";
+import { AddDrugModal } from "./components/AddDrugModal";
+import { AuthModal } from "./components/AuthModal";
+import { LandingScreen } from "./components/LandingScreen";
+import { LogoutModal } from "./components/LogoutModal";
+import { Dispensing } from "./components/Dispensing";
+import { Suppliers } from "./components/Suppliers";
+import { Patients } from "./components/Patients";
+import { Reports } from "./components/Reports";
+import { StockAdjustments } from "./components/StockAdjustments";
+import { Settings } from "./components/Settings";
+import { UserManagement } from "./components/UserManagement";
+
+import type {
+DispenseTransaction,
+Drug,
+PatientRecord,
+PharmacySettings,
+StockAdjustment,
+Supplier,
+TabType,
+UserAccount,
+} from "./types";
+
+import pharmacyDataService from "./services/pharmacyData";
+import authService from "./services/auth";
+import accountService from "./services/account";
+
+const DEFAULT_SETTINGS: PharmacySettings = {
+pharmacyName: "AfyaLink Pharmacy",
+tagline: "Healthcare & Wellness Center",
+address: "Moi Avenue, Nairobi",
+phone: "0700111222",
+email: "[info@afyalinkpharmacy.co.ke](mailto:info@afyalinkpharmacy.co.ke)",
+currency: "KES",
+clinicianName: "",
+expiryAlertDays: 90,
+reorderAlertLevel: 10,
+logoUrl: "/logo/logo.png",
+};
 
 export default function App() {
-  // Navigation active tab
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+const [activeTab, setActiveTab] =
+useState<TabType>("dashboard");
 
-  // User Accounts & Authentication State
-  const [users, setUsers] = useState<UserAccount[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_users');
-    return saved ? JSON.parse(saved) : initialUsers;
+const [currentUser, setCurrentUser] =
+useState<UserAccount | null>(() =>
+authService.getStoredUser(),
+);
+
+const users: UserAccount[] = currentUser
+? [currentUser]
+: [];
+
+const [isAuthModalOpen, setIsAuthModalOpen] =
+useState(false);
+
+const [authModalInitialMode, setAuthModalInitialMode] =
+useState<"login" | "signup" | "forgot">("login");
+
+const [isLogoutModalOpen, setIsLogoutModalOpen] =
+useState(false);
+
+const [drugs, setDrugs] =
+useState<Drug[]>([]);
+
+const [patients, setPatients] =
+useState<PatientRecord[]>([]);
+
+const [suppliers, setSuppliers] =
+useState<Supplier[]>([]);
+
+const [transactions, setTransactions] =
+useState<DispenseTransaction[]>([]);
+
+const [adjustments, setAdjustments] =
+useState<StockAdjustment[]>([]);
+
+const [settings, setSettings] =
+useState<PharmacySettings>(
+DEFAULT_SETTINGS,
+);
+
+const [isLoading, setIsLoading] =
+useState(false);
+
+const [loadError, setLoadError] =
+useState<string | null>(null);
+
+const [isAddDrugOpen, setIsAddDrugOpen] =
+useState(false);
+
+const [editingDrug, setEditingDrug] =
+useState<Drug | null>(null);
+
+const loadApplicationData = async () => {
+if (!authService.isAuthenticated()) {
+return;
+}
+
+
+try {
+  setIsLoading(true);
+  setLoadError(null);
+
+  const [
+    loadedDrugs,
+    loadedPatients,
+    loadedSuppliers,
+    loadedTransactions,
+    loadedAdjustments,
+    loadedSettings,
+  ] = await Promise.all([
+    pharmacyDataService.getDrugs(),
+    pharmacyDataService.getPatients(),
+    pharmacyDataService.getSuppliers(),
+    pharmacyDataService.getTransactions(),
+    pharmacyDataService.getStockAdjustments(),
+    pharmacyDataService.getSettings(),
+  ]);
+
+  setDrugs(loadedDrugs);
+  setPatients(loadedPatients);
+  setSuppliers(loadedSuppliers);
+  setTransactions(loadedTransactions);
+  setAdjustments(loadedAdjustments);
+
+  setSettings({
+    ...DEFAULT_SETTINGS,
+    ...loadedSettings,
+    logoUrl:
+      loadedSettings.logoUrl ||
+      DEFAULT_SETTINGS.logoUrl,
   });
+} catch (error) {
+  console.error(
+    "Failed to load PharmaTrack data:",
+    error,
+  );
 
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    const saved = localStorage.getItem('pharmatrack_current_user');
-    if (saved) return JSON.parse(saved);
-    return null; // Default to landing screen if no session
-  });
+  setLoadError(
+    error instanceof Error
+      ? error.message
+      : "Unable to load pharmacy data.",
+  );
+} finally {
+  setIsLoading(false);
+}
 
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalInitialMode, setAuthModalInitialMode] = useState<'login' | 'signup' | 'forgot'>('login');
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
-  // Application Persistent State
-  const [settings, setSettings] = useState<PharmacySettings>(() => {
-    const saved = localStorage.getItem('pharmatrack_settings');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return { logoUrl: '/logo/logo.png', ...parsed };
-    }
-    return initialSettings;
-  });
+};
 
-  const [drugs, setDrugs] = useState<Drug[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_drugs');
-    const loaded: Drug[] = saved ? JSON.parse(saved) : initialDrugs;
-    const now = new Date();
-    return loaded.map((d) => {
-      const isExpired = d.status === 'Expired' || (d.expiryDate && new Date(d.expiryDate) < now);
-      if (isExpired) {
-        const updatedStatus = d.qty === 0 ? 'Out of Stock' : (d.qty <= (initialSettings?.reorderAlertLevel || 10) ? 'Low Stock' : 'In Stock');
-        return {
-          ...d,
-          expiryDate: '2027-12-31',
-          status: updatedStatus,
-        };
-      }
-      return d;
-    });
-  });
+useEffect(() => {
+const initialiseSession = async () => {
+if (!authService.isAuthenticated()) {
+return;
+}
 
-  const [transactions, setTransactions] = useState<DispenseTransaction[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_transactions');
-    return saved ? JSON.parse(saved) : initialTransactions;
-  });
 
-  const [patients, setPatients] = useState<PatientRecord[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_patients');
-    return saved ? JSON.parse(saved) : initialPatients;
-  });
+  try {
+    const user =
+      await authService.getCurrentUser();
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_suppliers');
-    return saved ? JSON.parse(saved) : initialSuppliers;
-  });
-
-  const [adjustments, setAdjustments] = useState<StockAdjustment[]>(() => {
-    const saved = localStorage.getItem('pharmatrack_adjustments');
-    return saved ? JSON.parse(saved) : initialAdjustments;
-  });
-
-  // Modal State for Add / Edit Drug
-  const [isAddDrugOpen, setIsAddDrugOpen] = useState<boolean>(false);
-  const [editingDrug, setEditingDrug] = useState<Drug | null>(null);
-
-  // Sync to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_settings', JSON.stringify(settings));
-  }, [settings]);
-
-  // Global Ctrl+P / Cmd+P listener to switch to dispensing tab if not active
-  useEffect(() => {
-    const handleGlobalPrintShortcut = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
-        if (activeTab !== 'dispensing') {
-          setActiveTab('dispensing');
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleGlobalPrintShortcut);
-    return () => window.removeEventListener('keydown', handleGlobalPrintShortcut);
-  }, [activeTab]);
-
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_drugs', JSON.stringify(drugs));
-  }, [drugs]);
-
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_transactions', JSON.stringify(transactions));
-  }, [transactions]);
-
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_patients', JSON.stringify(patients));
-  }, [patients]);
-
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_suppliers', JSON.stringify(suppliers));
-  }, [suppliers]);
-
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_adjustments', JSON.stringify(adjustments));
-  }, [adjustments]);
-
-  // Handlers
-  const handleOpenAddDrug = () => {
-    setEditingDrug(null);
-    setIsAddDrugOpen(true);
-  };
-
-  const handleOpenEditDrug = (drug: Drug) => {
-    setEditingDrug(drug);
-    setIsAddDrugOpen(true);
-  };
-
-  const handleSaveDrug = (drugData: Partial<Drug>) => {
-    if (editingDrug) {
-      setDrugs((prev) =>
-        prev.map((d) => (d.id === editingDrug.id ? { ...d, ...drugData } as Drug : d))
-      );
-    } else {
-      const newId = String(drugs.length + 1);
-      const newDrug: Drug = {
-        id: newId,
-        code: drugData.code || `DRG-${String(drugs.length + 1).padStart(4, '0')}`,
-        name: drugData.name || '',
-        genericName: drugData.genericName || '',
-        category: drugData.category || 'Other',
-        formulation: drugData.formulation || 'Tablets',
-        batchNo: drugData.batchNo || `BN2026-${String(drugs.length + 1).padStart(3, '0')}`,
-        manufactureDate: drugData.manufactureDate,
-        expiryDate: drugData.expiryDate || '2027-01-01',
-        qty: drugData.qty || 0,
-        unit: drugData.unit || 'Tablets',
-        buyingPrice: drugData.buyingPrice || 0,
-        sellingPrice: drugData.sellingPrice || 0,
-        markupPercent: drugData.markupPercent || 0,
-        status: drugData.status || 'In Stock',
-        notes: drugData.notes,
-        createdAt: new Date().toISOString().slice(0, 10),
-      };
-      setDrugs((prev) => [newDrug, ...prev]);
-    }
-  };
-
-  const handleReceiveStockSubmit = (
-    drugId: string,
-    qtyReceived: number,
-    invoiceNo: string,
-    buyingPrice?: number
-  ) => {
-    setDrugs((prev) =>
-      prev.map((d) => {
-        if (d.id === drugId) {
-          const newQty = d.qty + qtyReceived;
-          const newBuyingPrice = buyingPrice !== undefined ? buyingPrice : d.buyingPrice;
-          const markup = newBuyingPrice > 0 ? ((d.sellingPrice - newBuyingPrice) / newBuyingPrice) * 100 : d.markupPercent;
-          
-          let newStatus = d.status;
-          if (d.status !== 'Expired') {
-            newStatus = newQty > settings.reorderAlertLevel ? 'In Stock' : 'Low Stock';
-          }
-          return {
-            ...d,
-            qty: newQty,
-            buyingPrice: newBuyingPrice,
-            markupPercent: Number(markup.toFixed(1)),
-            status: newStatus,
-          };
-        }
-        return d;
-      })
-    );
-  };
-
-  const handleCompleteTransaction = (newTxn: DispenseTransaction) => {
-    // Add to transaction log
-    setTransactions((prev) => [newTxn, ...prev]);
-
-    // Deduct stock from drug database
-    setDrugs((prev) =>
-      prev.map((d) => {
-        const item = newTxn.items.find((i) => i.drugId === d.id);
-        if (item) {
-          const updatedQty = Math.max(0, d.qty - item.qty);
-          let newStatus = d.status;
-          if (d.status !== 'Expired') {
-            if (updatedQty === 0) newStatus = 'Out of Stock';
-            else if (updatedQty <= settings.reorderAlertLevel) newStatus = 'Low Stock';
-            else newStatus = 'In Stock';
-          }
-          return {
-            ...d,
-            qty: updatedQty,
-            status: newStatus,
-          };
-        }
-        return d;
-      })
-    );
-  };
-
-  const handleAddSupplier = (newSupplier: Supplier) => {
-    setSuppliers((prev) => [...prev, newSupplier]);
-  };
-
-  const handleEditSupplier = (updatedSupplier: Supplier) => {
-    setSuppliers((prev) => prev.map((s) => (s.id === updatedSupplier.id ? updatedSupplier : s)));
-  };
-
-  const handleAddPatient = (newPatient: PatientRecord) => {
-    setPatients((prev) => [...prev, newPatient]);
-  };
-
-  const handleEditPatient = (updatedPatient: PatientRecord) => {
-    setPatients((prev) => prev.map((p) => (p.id === updatedPatient.id ? updatedPatient : p)));
-  };
-
-  const handleAddAdjustment = (newAdj: StockAdjustment) => {
-    setAdjustments((prev) => [newAdj, ...prev]);
-    // Also adjust drug quantity
-    setDrugs((prev) =>
-      prev.map((d) => {
-        if (d.id === newAdj.drugId) {
-          return {
-            ...d,
-            qty: newAdj.adjustedQty,
-            status: newAdj.adjustedQty === 0 ? 'Out of Stock' : d.status,
-          };
-        }
-        return d;
-      })
-    );
-  };
-
-  // Sync User Accounts & Current User to LocalStorage
-  useEffect(() => {
-    localStorage.setItem('pharmatrack_users', JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('pharmatrack_current_user', JSON.stringify(currentUser));
-      // Auto update settings clinician name to match logged in user
-      setSettings((prev) => ({ ...prev, clinicianName: currentUser.name }));
-    } else {
-      localStorage.removeItem('pharmatrack_current_user');
-    }
-  }, [currentUser]);
-
-  const handleSaveSettings = (newSettings: PharmacySettings) => {
-    setSettings(newSettings);
-    if (currentUser) {
-      const updatedUser = { ...currentUser, name: newSettings.clinicianName };
-      setCurrentUser(updatedUser);
-      setUsers((prev) => prev.map((u) => (u.id === currentUser.id ? updatedUser : u)));
-    }
-  };
-
-  // Auth Handlers
-  const handleLoginSuccess = (user: UserAccount) => {
     setCurrentUser(user);
-    setSettings((prev) => ({ ...prev, clinicianName: user.name }));
-    setIsAuthModalOpen(false);
-  };
-
-  const handleSignUpSuccess = (newUser: UserAccount) => {
-    setUsers((prev) => [...prev, newUser]);
-    setCurrentUser(newUser);
-    setSettings((prev) => ({ ...prev, clinicianName: newUser.name }));
-    setIsAuthModalOpen(false);
-  };
-
-  const handleUpdateUserPassword = (userId: string, newPass: string) => {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, passwordHash: newPass } : u))
+  } catch (error) {
+    console.error(
+      "Unable to restore authenticated session:",
+      error,
     );
-    if (currentUser && currentUser.id === userId) {
-      setCurrentUser((prev) => (prev ? { ...prev, passwordHash: newPass } : null));
+
+    authService.clearSession();
+    setCurrentUser(null);
+  }
+};
+
+void initialiseSession();
+
+
+}, []);
+
+useEffect(() => {
+if (!currentUser) {
+return;
+}
+
+
+void loadApplicationData();
+
+
+}, [currentUser]);
+
+useEffect(() => {
+const handleGlobalPrintShortcut = (
+event: KeyboardEvent,
+) => {
+if (
+(event.ctrlKey || event.metaKey) &&
+event.key.toLowerCase() === "p"
+) {
+event.preventDefault();
+
+
+    if (activeTab !== "dispensing") {
+      setActiveTab("dispensing");
     }
-  };
+  }
+};
 
-  // Quick direct login without password requirement
-  const handleDirectLogin = () => {
-    const userToLogin = users.length > 0 ? users[0] : {
-      id: 'usr-default',
-      name: 'Dr. Sarah Jenkins',
-      email: 's.jenkins@pharmatrack.com',
-      role: 'Pharmacist' as const,
-      passwordHash: 'pharmatrack123',
-      isVerified: true,
-      createdAt: new Date().toISOString()
-    };
-    handleLoginSuccess(userToLogin);
-    setActiveTab('dashboard');
-    setIsAuthModalOpen(false);
-  };
+window.addEventListener(
+  "keydown",
+  handleGlobalPrintShortcut,
+);
 
-  // When not logged in, display the full screen landing page matching prototype
+return () =>
+  window.removeEventListener(
+    "keydown",
+    handleGlobalPrintShortcut,
+  );
+
+
+}, [activeTab]);
+
+const handleOpenAddDrug = () => {
+setEditingDrug(null);
+setIsAddDrugOpen(true);
+};
+
+const handleOpenEditDrug = (
+drug: Drug,
+) => {
+setEditingDrug(drug);
+setIsAddDrugOpen(true);
+};
+
+const handleSaveDrug = async (
+drugData: Partial<Drug>,
+) => {
+try {
+if (editingDrug) {
+const updatedDrug =
+await pharmacyDataService.updateDrug(
+editingDrug.id,
+drugData,
+);
+
+
+    setDrugs((previous) =>
+      previous.map((drug) =>
+        drug.id === editingDrug.id
+          ? updatedDrug
+          : drug,
+      ),
+    );
+  } else {
+    const createdDrug =
+      await pharmacyDataService.createDrug(
+        drugData,
+      );
+
+    setDrugs((previous) => [
+      createdDrug,
+      ...previous,
+    ]);
+  }
+
+  setIsAddDrugOpen(false);
+  setEditingDrug(null);
+} catch (error) {
+  console.error(
+    "Failed to save drug:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleReceiveStockSubmit = async (
+drugId: string,
+qtyReceived: number,
+_invoiceNo: string,
+buyingPrice?: number,
+): Promise<void> => {
+const drug = drugs.find(
+(item) => item.id === drugId,
+);
+
+
+if (!drug) {
+  throw new Error(
+    "Drug could not be found.",
+  );
+}
+
+if (
+  !Number.isInteger(qtyReceived) ||
+  qtyReceived <= 0
+) {
+  throw new Error(
+    "Quantity received must be a positive whole number.",
+  );
+}
+
+const newQty =
+  drug.qty + qtyReceived;
+
+const newBuyingPrice =
+  buyingPrice !== undefined
+    ? buyingPrice
+    : drug.buyingPrice;
+
+const markup =
+  newBuyingPrice > 0
+    ? ((drug.sellingPrice -
+        newBuyingPrice) /
+        newBuyingPrice) *
+      100
+    : drug.markupPercent;
+
+let status: Drug["status"];
+
+if (newQty === 0) {
+  status = "Out of Stock";
+} else if (
+  newQty <= settings.reorderAlertLevel
+) {
+  status = "Low Stock";
+} else {
+  status = "In Stock";
+}
+
+const updatedDrug =
+  await pharmacyDataService.updateDrug(
+    drugId,
+    {
+      qty: newQty,
+      buyingPrice: newBuyingPrice,
+      markupPercent:
+        Number(markup.toFixed(1)),
+      status,
+    },
+  );
+
+setDrugs((previous) =>
+  previous.map((item) =>
+    item.id === drugId
+      ? updatedDrug
+      : item,
+  ),
+);
+
+
+};
+
+const handleCompleteTransaction =
+async (
+newTransaction: DispenseTransaction,
+) => {
+try {
+const savedTransaction =
+await pharmacyDataService.createTransaction(
+newTransaction,
+);
+
+
+    setTransactions((previous) => [
+      savedTransaction,
+      ...previous,
+    ]);
+
+    const refreshedDrugs =
+      await pharmacyDataService.getDrugs();
+
+    setDrugs(refreshedDrugs);
+
+    const refreshedPatients =
+      await pharmacyDataService.getPatients();
+
+    setPatients(refreshedPatients);
+  } catch (error) {
+    console.error(
+      "Failed to complete transaction:",
+      error,
+    );
+
+    throw error;
+  }
+};
+
+
+const handleAddPatient = async (
+newPatient: PatientRecord,
+) => {
+try {
+const createdPatient =
+await pharmacyDataService.createPatient(
+newPatient,
+);
+
+
+  setPatients((previous) => [
+    ...previous,
+    createdPatient,
+  ]);
+} catch (error) {
+  console.error(
+    "Failed to add patient:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleEditPatient = async (
+updatedPatient: PatientRecord,
+) => {
+try {
+const savedPatient =
+await pharmacyDataService.updatePatient(
+updatedPatient.id,
+updatedPatient,
+);
+
+
+  setPatients((previous) =>
+    previous.map((patient) =>
+      patient.id === savedPatient.id
+        ? savedPatient
+        : patient,
+    ),
+  );
+} catch (error) {
+  console.error(
+    "Failed to update patient:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleAddSupplier = async (
+newSupplier: Supplier,
+) => {
+try {
+const createdSupplier =
+await pharmacyDataService.createSupplier(
+newSupplier,
+);
+
+
+  setSuppliers((previous) => [
+    ...previous,
+    createdSupplier,
+  ]);
+} catch (error) {
+  console.error(
+    "Failed to add supplier:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleEditSupplier = async (
+updatedSupplier: Supplier,
+) => {
+try {
+const savedSupplier =
+await pharmacyDataService.updateSupplier(
+updatedSupplier.id,
+updatedSupplier,
+);
+
+
+  setSuppliers((previous) =>
+    previous.map((supplier) =>
+      supplier.id === savedSupplier.id
+        ? savedSupplier
+        : supplier,
+    ),
+  );
+} catch (error) {
+  console.error(
+    "Failed to update supplier:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleAddAdjustment = async (
+newAdjustment: StockAdjustment,
+) => {
+try {
+const createdAdjustment =
+await pharmacyDataService.createStockAdjustment(
+newAdjustment,
+);
+
+
+  setAdjustments((previous) => [
+    createdAdjustment,
+    ...previous,
+  ]);
+
+  const refreshedDrugs =
+    await pharmacyDataService.getDrugs();
+
+  setDrugs(refreshedDrugs);
+} catch (error) {
+  console.error(
+    "Failed to create stock adjustment:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleSaveSettings = async (
+newSettings: PharmacySettings,
+) => {
+try {
+const savedSettings =
+await pharmacyDataService.updateSettings(
+newSettings,
+);
+
+
+  setSettings({
+    ...DEFAULT_SETTINGS,
+    ...savedSettings,
+    logoUrl:
+      savedSettings.logoUrl ||
+      DEFAULT_SETTINGS.logoUrl,
+  });
+} catch (error) {
+  console.error(
+    "Failed to save settings:",
+    error,
+  );
+
+  throw error;
+}
+
+
+};
+
+const handleUpdateUserPassword = async (
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> => {
   if (!currentUser) {
-    return (
-      <>
-        <LandingScreen
-          onLoginClick={handleDirectLogin}
-          onSignUpClick={() => {
-            setAuthModalInitialMode('signup');
-            setIsAuthModalOpen(true);
-          }}
-        />
-
-        <AuthModal
-          isOpen={isAuthModalOpen}
-          onClose={() => setIsAuthModalOpen(false)}
-          users={users}
-          currentUser={currentUser}
-          onLoginSuccess={handleLoginSuccess}
-          onSignUpSuccess={handleSignUpSuccess}
-          initialMode={authModalInitialMode}
-        />
-      </>
+    throw new Error(
+      "You must be logged in to change your password.",
     );
   }
 
-  return (
-    <div className="flex min-h-screen bg-slate-100 font-sans antialiased text-slate-800">
-      {/* Left Aligned Navigation Tabs */}
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        settings={settings} 
+  if (currentUser.id !== userId) {
+    throw new Error(
+      "You can only change the password of the currently authenticated account.",
+    );
+  }
+
+  await accountService.changePassword(
+    currentPassword,
+    newPassword,
+  );
+};
+
+const handleLoginSuccess = (
+user: UserAccount,
+) => {
+setCurrentUser(user);
+setActiveTab("dashboard");
+setIsAuthModalOpen(false);
+};
+
+const handleSignUpSuccess = (
+newUser: UserAccount,
+) => {
+setCurrentUser(newUser);
+setActiveTab("dashboard");
+setIsAuthModalOpen(false);
+};
+
+const handleDirectLogin = () => {
+setAuthModalInitialMode("login");
+setIsAuthModalOpen(true);
+};
+
+const handleConfirmLogout = () => {
+authService.clearSession();
+
+
+setCurrentUser(null);
+
+setDrugs([]);
+setPatients([]);
+setSuppliers([]);
+setTransactions([]);
+setAdjustments([]);
+setSettings(DEFAULT_SETTINGS);
+
+setActiveTab("dashboard");
+setIsLogoutModalOpen(false);
+
+
+};
+
+if (!currentUser) {
+return (
+<>
+<LandingScreen
+onLoginClick={handleDirectLogin}
+onSignUpClick={() => {
+setAuthModalInitialMode("signup");
+setIsAuthModalOpen(true);
+}}
+/>
+
+
+    <AuthModal
+      isOpen={isAuthModalOpen}
+      onClose={() =>
+        setIsAuthModalOpen(false)
+      }
+      currentUser={currentUser}
+      onLoginSuccess={
+        handleLoginSuccess
+      }
+      onSignUpSuccess={
+        handleSignUpSuccess
+      }
+      initialMode={
+        authModalInitialMode
+      }
+    />
+  </>
+);
+
+
+}
+
+return ( <div className="flex min-h-screen bg-slate-100 font-sans antialiased text-slate-800">
+<Sidebar
+activeTab={activeTab}
+setActiveTab={setActiveTab}
+settings={settings}
+currentUser={currentUser}
+onOpenAuthModal={() => {
+setAuthModalInitialMode("login");
+setIsAuthModalOpen(true);
+}}
+onLogoutClick={() =>
+setIsLogoutModalOpen(true)
+}
+/>
+
+
+  <main className="flex-1 overflow-y-auto">
+    {isLoading && (
+      <div className="sticky top-0 z-40 bg-[#22577A] text-white text-xs font-semibold px-4 py-2 text-center">
+        Loading PharmaTrack data...
+      </div>
+    )}
+
+    {loadError && (
+      <div className="sticky top-0 z-40 bg-rose-50 border-b border-rose-200 text-rose-800 px-4 py-3 text-sm flex items-center justify-between gap-4">
+        <span>{loadError}</span>
+
+        <button
+          type="button"
+          onClick={() =>
+            void loadApplicationData()
+          }
+          className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 rounded-lg text-xs font-bold"
+        >
+          Retry
+        </button>
+      </div>
+    )}
+
+    {activeTab === "dashboard" && (
+      <Dashboard
+        drugs={drugs}
+        transactions={transactions}
+        settings={settings}
+        setActiveTab={setActiveTab}
+        onQuickDispense={() =>
+          setActiveTab("dispensing")
+        }
+        onReceiveStock={() =>
+          setActiveTab("inventory")
+        }
+        onRecordAdjustment={() =>
+          setActiveTab("stock-adjustments")
+        }
+      />
+    )}
+
+    {activeTab === "inventory" && (
+      <Inventory
+        drugs={drugs}
+        settings={settings}
+        onAddDrug={handleOpenAddDrug}
+        onEditDrug={handleOpenEditDrug}
+        onReceiveStockSubmit={
+          handleReceiveStockSubmit
+        }
+      />
+    )}
+
+    {activeTab === "dispensing" && (
+      <Dispensing
+        drugs={drugs}
+        settings={settings}
+        transactions={transactions}
+        patients={patients}
+        onCompleteTransaction={
+          handleCompleteTransaction
+        }
+      />
+    )}
+
+    {activeTab === "suppliers" && (
+      <Suppliers
+        suppliers={suppliers}
+        onAddSupplier={handleAddSupplier}
+        onUpdateSupplier={
+          handleEditSupplier
+        }
+      />
+    )}
+
+    {activeTab === "patients" && (
+      <Patients
+        patients={patients}
+        onAddPatient={handleAddPatient}
+        onUpdatePatient={
+          handleEditPatient
+        }
+      />
+    )}
+
+    {activeTab === "reports" && (
+      <Reports
+        drugs={drugs}
+        transactions={transactions}
+        settings={settings}
+      />
+    )}
+
+    {activeTab === "stock-adjustments" && (
+      <StockAdjustments
+        drugs={drugs}
+        adjustments={adjustments}
+        settings={settings}
+        onAddAdjustment={
+          handleAddAdjustment
+        }
+      />
+    )}
+
+    {activeTab === "user-management" &&
+      currentUser.role === "Admin" && (
+        <UserManagement
+          currentUserId={currentUser.id}
+        />
+      )}
+
+    {activeTab === "settings" && (
+      <Settings
+        settings={settings}
+        onSaveSettings={
+          handleSaveSettings
+        }
         currentUser={currentUser}
+        users={users}
+        onUpdateUserPassword={
+          handleUpdateUserPassword
+        }
         onOpenAuthModal={() => {
-          setAuthModalInitialMode('login');
+          setAuthModalInitialMode("login");
           setIsAuthModalOpen(true);
         }}
-        onLogoutClick={() => setIsLogoutModalOpen(true)}
       />
+    )}
+  </main>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto">
-        {activeTab === 'dashboard' && (
-          <Dashboard
-            drugs={drugs}
-            transactions={transactions}
-            settings={settings}
-            setActiveTab={setActiveTab}
-            onQuickDispense={() => setActiveTab('dispensing')}
-            onReceiveStock={() => setActiveTab('inventory')}
-            onRecordAdjustment={() => setActiveTab('stock-adjustments')}
-          />
-        )}
+  <AddDrugModal
+    isOpen={isAddDrugOpen}
+    onClose={() => {
+      setIsAddDrugOpen(false);
+      setEditingDrug(null);
+    }}
+    onSave={handleSaveDrug}
+    editingDrug={editingDrug}
+    settings={settings}
+    nextCodeNumber={drugs.length + 1}
+  />
 
-        {activeTab === 'inventory' && (
-          <Inventory
-            drugs={drugs}
-            settings={settings}
-            onAddDrug={handleOpenAddDrug}
-            onEditDrug={handleOpenEditDrug}
-            onReceiveStockSubmit={handleReceiveStockSubmit}
-          />
-        )}
+  <LogoutModal
+    isOpen={isLogoutModalOpen}
+    onClose={() =>
+      setIsLogoutModalOpen(false)
+    }
+    onConfirmLogout={
+      handleConfirmLogout
+    }
+    userName={currentUser.name}
+  />
 
-        {activeTab === 'dispensing' && (
-          <Dispensing
-            drugs={drugs}
-            settings={settings}
-            transactions={transactions}
-            patients={patients}
-            onCompleteTransaction={handleCompleteTransaction}
-          />
-        )}
+  <AuthModal
+    isOpen={isAuthModalOpen}
+    onClose={() =>
+      setIsAuthModalOpen(false)
+    }
+    currentUser={currentUser}
+    onLoginSuccess={
+      handleLoginSuccess
+    }
+    onSignUpSuccess={
+      handleSignUpSuccess
+    }
+    initialMode={
+      authModalInitialMode
+    }
+  />
 
-        {activeTab === 'suppliers' && (
-          <Suppliers suppliers={suppliers} onAddSupplier={handleAddSupplier} onUpdateSupplier={handleEditSupplier} />
-        )}
+  <Settings
+  settings={settings}
+  onSaveSettings={
+    handleSaveSettings
+  }
+  currentUser={currentUser}
+  users={users}
+  onUpdateUserPassword={
+    handleUpdateUserPassword
+  }
+  onOpenAuthModal={() => {
+    setAuthModalInitialMode("login");
+    setIsAuthModalOpen(true);
+  }}
+/>
+</div>
 
-        {activeTab === 'patients' && (
-          <Patients patients={patients} onAddPatient={handleAddPatient} onUpdatePatient={handleEditPatient} />
-        )}
 
-        {activeTab === 'reports' && (
-          <Reports drugs={drugs} transactions={transactions} settings={settings} />
-        )}
-
-        {activeTab === 'stock-adjustments' && (
-          <StockAdjustments
-            drugs={drugs}
-            adjustments={adjustments}
-            settings={settings}
-            onAddAdjustment={handleAddAdjustment}
-          />
-        )}
-
-        {activeTab === 'settings' && (
-          <Settings 
-            settings={settings} 
-            onSaveSettings={handleSaveSettings} 
-            currentUser={currentUser}
-            users={users}
-            onUpdateUserPassword={handleUpdateUserPassword}
-            onOpenAuthModal={() => {
-              setAuthModalInitialMode('login');
-              setIsAuthModalOpen(true);
-            }}
-          />
-        )}
-      </main>
-
-      {/* Add / Edit Drug Modal */}
-      <AddDrugModal
-        isOpen={isAddDrugOpen}
-        onClose={() => setIsAddDrugOpen(false)}
-        onSave={handleSaveDrug}
-        editingDrug={editingDrug}
-        settings={settings}
-        nextCodeNumber={drugs.length + 1}
-      />
-
-      {/* Logout Confirmation Popup Modal */}
-      <LogoutModal
-        isOpen={isLogoutModalOpen}
-        onClose={() => setIsLogoutModalOpen(false)}
-        onConfirmLogout={() => {
-          setCurrentUser(null);
-          localStorage.removeItem('pharmatrack_current_user');
-        }}
-        userName={currentUser?.name}
-      />
-
-      {/* Auth Modal (Login / Sign Up / Forgot Password OTP) */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        users={users}
-        currentUser={currentUser}
-        onLoginSuccess={handleLoginSuccess}
-        onSignUpSuccess={handleSignUpSuccess}
-        initialMode={authModalInitialMode}
-      />
-    </div>
-  );
+);
 }

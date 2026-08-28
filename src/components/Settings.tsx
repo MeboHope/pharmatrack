@@ -1,370 +1,815 @@
-// src/components/Settings.tsx
-import React, { useState } from 'react';
-import { Settings as SettingsIcon, Save, Building2, CheckCircle2, Lock, Shield, KeyRound, User, Mail, AlertCircle, LogOut, ArrowDown } from 'lucide-react';
-import { PharmacySettings, UserAccount } from '../types';
+import React, {
+  useEffect,
+  useState,
+} from "react";
+
+import {
+  Save,
+  Loader2,
+  Settings as SettingsIcon,
+  Building2,
+  Phone,
+  Mail,
+  MapPin,
+  UserRound,
+  AlertCircle,
+  CheckCircle2,
+  Lock,
+  Eye,
+  EyeOff,
+  KeyRound,
+} from "lucide-react";
+
+import type {
+  PharmacySettings,
+  UserAccount,
+} from "../types";
+
+import {
+  getPharmacySettings,
+  updatePharmacySettings,
+  type PharmacySettingsData,
+} from "../services/settings";
+
+import accountService from "../services/account";
 
 interface SettingsProps {
   settings: PharmacySettings;
-  onSaveSettings: (newSettings: PharmacySettings) => void;
-  currentUser: UserAccount | null;
+  onSaveSettings: (
+    settings: PharmacySettings,
+  ) => void;
+  currentUser: UserAccount;
   users: UserAccount[];
-  onUpdateUserPassword: (userId: string, newPass: string) => void;
+  onUpdateUserPassword: (
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
   onOpenAuthModal: () => void;
 }
 
-const getInitials = (name: string): string => {
-  if (!name) return 'SJ';
-  const clean = name.replace(/^(Dr\.|Mr\.|Mrs\.|Ms\.|Prof\.|Doctor)\s+/i, '').trim();
-  const parts = clean.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'SJ';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
+const toFormSettings = (
+  settings: PharmacySettings,
+): PharmacySettingsData => ({
+  pharmacyName:
+    settings.pharmacyName || "",
+  tagline:
+    settings.tagline || "",
+  address:
+    settings.address || "",
+  phone:
+    settings.phone || "",
+  email:
+    settings.email || "",
+  currency:
+    settings.currency || "KES",
+  clinicianName:
+    settings.clinicianName || "",
+  expiryAlertDays:
+    Number(settings.expiryAlertDays) || 90,
+  reorderAlertLevel:
+    Number(settings.reorderAlertLevel) || 10,
+  logoUrl:
+    settings.logoUrl ||
+    "/logo/logo.png",
+});
 
-export const Settings: React.FC<SettingsProps> = ({ 
-  settings, 
+export const Settings: React.FC<
+  SettingsProps
+> = ({
+  settings,
   onSaveSettings,
   currentUser,
-  users,
-  onUpdateUserPassword,
-  onOpenAuthModal
 }) => {
-  const [formData, setFormData] = useState<PharmacySettings>({ ...settings });
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [form, setForm] =
+    useState<PharmacySettingsData>(
+      toFormSettings(settings),
+    );
 
-  React.useEffect(() => {
-    setFormData({ ...settings });
-  }, [settings]);
+  const [isLoading, setIsLoading] =
+    useState(true);
 
-  // Password Change state
-  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [passwordError, setPasswordError] = useState('');
-  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [isSaving, setIsSaving] =
+    useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveSettings(formData);
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+  const [error, setError] =
+    useState("");
+
+  const [successMessage, setSuccessMessage] =
+    useState("");
+
+  const [currentPassword, setCurrentPassword] =
+    useState("");
+
+  const [newPassword, setNewPassword] =
+    useState("");
+
+  const [confirmPassword, setConfirmPassword] =
+    useState("");
+
+  const [showCurrentPassword, setShowCurrentPassword] =
+    useState(false);
+
+  const [showNewPassword, setShowNewPassword] =
+    useState(false);
+
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false);
+
+  const [isChangingPassword, setIsChangingPassword] =
+    useState(false);
+
+  const [passwordError, setPasswordError] =
+    useState("");
+
+  const [passwordSuccess, setPasswordSuccess] =
+    useState("");
+
+  const canEdit =
+    currentUser.role === "Admin" ||
+    currentUser.role === "Pharmacist";
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadSettings =
+      async () => {
+        try {
+          setIsLoading(true);
+          setError("");
+
+          const remoteSettings =
+            await getPharmacySettings();
+
+          if (!mounted) {
+            return;
+          }
+
+          setForm(
+            toFormSettings(
+              remoteSettings,
+            ),
+          );
+        } catch (requestError) {
+          if (!mounted) {
+            return;
+          }
+
+          setError(
+            requestError instanceof Error
+              ? requestError.message
+              : "Unable to load pharmacy settings.",
+          );
+        } finally {
+          if (mounted) {
+            setIsLoading(false);
+          }
+        }
+      };
+
+    void loadSettings();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const updateField = <
+    K extends keyof PharmacySettingsData
+  >(
+    field: K,
+    value: PharmacySettingsData[K],
+  ) => {
+    setForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
   };
 
-  const handlePasswordChange = (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasswordError('');
-    setPasswordSuccess('');
+  const handleSave =
+    async (
+      event: React.FormEvent<HTMLFormElement>,
+    ) => {
+      event.preventDefault();
 
-    if (!currentUser) {
-      setPasswordError('No user is currently logged in. Please log in first.');
-      return;
-    }
+      if (!canEdit) {
+        setError(
+          "You do not have permission to modify pharmacy settings.",
+        );
+        return;
+      }
 
-    if (currentPasswordInput !== currentUser.passwordHash) {
-      setPasswordError('Current password is incorrect.');
-      return;
-    }
+      try {
+        setIsSaving(true);
+        setError("");
+        setSuccessMessage("");
 
-    if (newPasswordInput.length < 6) {
-      setPasswordError('New password must be at least 6 characters long.');
-      return;
-    }
+        const saved =
+          await updatePharmacySettings(
+            form,
+          );
 
-    if (newPasswordInput !== confirmPasswordInput) {
-      setPasswordError('New password and confirm password do not match.');
-      return;
-    }
+        const normalized =
+          toFormSettings(saved);
 
-    onUpdateUserPassword(currentUser.id, newPasswordInput);
-    setPasswordSuccess('Your password has been changed successfully!');
-    setCurrentPasswordInput('');
-    setNewPasswordInput('');
-    setConfirmPasswordInput('');
-    setTimeout(() => setPasswordSuccess(''), 4000);
-  };
+        setForm(normalized);
+
+        onSaveSettings({
+          pharmacyName:
+            normalized.pharmacyName,
+          tagline:
+            normalized.tagline,
+          address:
+            normalized.address,
+          phone:
+            normalized.phone,
+          email:
+            normalized.email,
+          currency:
+            normalized.currency,
+          clinicianName:
+            normalized.clinicianName,
+          expiryAlertDays:
+            normalized.expiryAlertDays,
+          reorderAlertLevel:
+            normalized.reorderAlertLevel,
+          logoUrl:
+            normalized.logoUrl,
+        });
+
+        setSuccessMessage(
+          "Pharmacy settings saved successfully.",
+        );
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to save pharmacy settings.",
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+  const handleChangePassword =
+    async (
+      event: React.FormEvent<HTMLFormElement>,
+    ) => {
+      event.preventDefault();
+
+      setPasswordError("");
+      setPasswordSuccess("");
+
+      if (!currentPassword) {
+        setPasswordError(
+          "Current password is required.",
+        );
+        return;
+      }
+
+      if (!newPassword) {
+        setPasswordError(
+          "New password is required.",
+        );
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        setPasswordError(
+          "New password must contain at least 8 characters.",
+        );
+        return;
+      }
+
+      if (
+        newPassword !==
+        confirmPassword
+      ) {
+        setPasswordError(
+          "The new passwords do not match.",
+        );
+        return;
+      }
+
+      if (
+        currentPassword ===
+        newPassword
+      ) {
+        setPasswordError(
+          "The new password must be different from the current password.",
+        );
+        return;
+      }
+
+      try {
+        setIsChangingPassword(true);
+
+        await accountService.changePassword(
+          currentPassword,
+          newPassword,
+        );
+
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+
+        setPasswordSuccess(
+          "Password changed successfully.",
+        );
+      } catch (requestError) {
+        setPasswordError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to change password.",
+        );
+      } finally {
+        setIsChangingPassword(false);
+      }
+    };
+
+  if (isLoading) {
+    return (
+      <section className="min-h-screen bg-slate-100 p-6">
+        <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-slate-200 bg-white p-16 shadow-sm">
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Loading pharmacy settings...
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <div className="p-6 space-y-6 max-w-[1000px] mx-auto">
-      {savedSuccess && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium rounded-xl flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span>Pharmacy settings updated successfully! All receipts and dashboards reflect the new configuration.</span>
-        </div>
-      )}
+    <section className="min-h-screen bg-slate-100 p-6">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-[#22577A] p-2.5 text-white">
+              <SettingsIcon className="h-5 w-5" />
+            </div>
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 space-y-6">
-        {/* Pharmacy Identity */}
-        <div className="space-y-4">
-          <div className="border-b border-slate-200 pb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-[#22577A] font-bold">
-              <Building2 className="w-5 h-5" />
-              <h2 className="text-base text-slate-900">Pharmacy Profile & Identity</h2>
-            </div>
-          </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                Pharmacy Settings
+              </h1>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Pharmacy Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.pharmacyName}
-                onChange={(e) => setFormData({ ...formData, pharmacyName: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">Displays on dashboard welcome banner and receipts</p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Tagline / Motto</label>
-              <input
-                type="text"
-                value={formData.tagline}
-                onChange={(e) => setFormData({ ...formData, tagline: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Address Location</label>
-              <input
-                type="text"
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Contact</label>
-              <input
-                type="text"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
+              <p className="mt-1 text-sm text-slate-500">
+                Manage pharmacy information, inventory alerts, and your account security.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Clinician / Practitioner Identity */}
-        <div className="space-y-4 pt-4 border-t border-slate-100">
-          <div className="border-b border-slate-200 pb-2 flex items-center gap-2 text-[#22577A] font-bold">
-            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="7" r="4" />
-              <path d="M5.5 21a8.38 8.38 0 0 1 13 0" />
-              <path d="M12 11v5" />
-              <path d="M9.5 13.5h5" />
-            </svg>
-            <h2 className="text-base text-slate-900">Active Clinician / Practitioner Name</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Clinician Name (Automatic from logged-in user or settings) *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.clinicianName}
-                onChange={(e) => setFormData({ ...formData, clinicianName: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">Pre-fills prescriber details during dispensing wizard</p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Currency Code / Symbol</label>
-              <input
-                type="text"
-                required
-                value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden font-bold"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Stock Alert Thresholds */}
-        <div className="space-y-4 pt-4 border-t border-slate-100">
-          <h2 className="text-base font-bold text-slate-900 border-b border-slate-200 pb-2">
-            Inventory Threshold Rules
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Expiry Alert Threshold (Days)
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={formData.expiryAlertDays}
-                onChange={(e) => setFormData({ ...formData, expiryAlertDays: parseInt(e.target.value) || 90 })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Reorder Alert Level (Units)
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={formData.reorderAlertLevel}
-                onChange={(e) => setFormData({ ...formData, reorderAlertLevel: parseInt(e.target.value) || 10 })}
-                className="w-full px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end pt-4 border-t border-slate-100">
-          <button
-            type="submit"
-            className="px-6 py-3 text-sm font-bold text-white rounded-xl shadow-md transition-colors flex items-center gap-2"
-            style={{ backgroundColor: '#0d8065' }}
-          >
-            <Save className="w-4 h-4" /> Save Settings
-          </button>
-        </div>
-      </form>
-
-      {/* DEDICATED PASSWORD CHANGING & ACCOUNT SECURITY SECTION */}
-      <div id="account-security" className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 space-y-6">
-        <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-[#22577A] font-bold">
-            <Lock className="w-5 h-5 text-[#57CC99]" />
-            <h2 className="text-lg text-slate-900">Account Security & Password Management</h2>
-          </div>
-          <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md font-semibold border border-slate-200">
-            Settings &gt; Account Security
-          </span>
-        </div>
-
-        {/* Current User Card */}
-        {currentUser ? (
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div 
-                className="w-11 h-11 rounded-full bg-[#22577A] text-white flex items-center justify-center text-sm leading-none shrink-0 shadow-sm"
-                style={{ fontFamily: 'Montserrat, sans-serif', fontWeight: 700 }}
-              >
-                {getInitials(formData.clinicianName || currentUser.name)}
-              </div>
-              <div>
-                <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <span>{formData.clinicianName || currentUser.name}</span>
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-[#22577A]/10 text-[#22577A] rounded-md">
-                    {currentUser.role}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-500">{currentUser.email}</div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={onOpenAuthModal}
-              className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl transition-colors flex items-center gap-2 shadow-xs"
-            >
-              <LogOut className="w-3.5 h-3.5 text-slate-500" /> Switch Account / Log In
-            </button>
-          </div>
-        ) : (
-          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-900">
-            <span>No account currently logged in.</span>
-            <button
-              type="button"
-              onClick={onOpenAuthModal}
-              className="px-3.5 py-1.5 bg-[#22577A] text-white font-bold rounded-lg"
-            >
-              Log In / Sign Up
-            </button>
+        {error && (
+          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
-        {/* Change Password Form */}
-        <form onSubmit={handlePasswordChange} className="space-y-4 pt-2">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-[#22577A]" /> Change Account Password
-          </h3>
+        {successMessage && (
+          <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+        )}
+
+        <form
+          onSubmit={handleSave}
+          className="space-y-6"
+        >
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-[#22577A]" />
+
+              <h2 className="font-bold text-slate-900">
+                Pharmacy Information
+              </h2>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Pharmacy Name
+                </label>
+
+                <input
+                  type="text"
+                  value={form.pharmacyName}
+                  onChange={(event) =>
+                    updateField(
+                      "pharmacyName",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  required
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Tagline
+                </label>
+
+                <input
+                  type="text"
+                  value={form.tagline}
+                  onChange={(event) =>
+                    updateField(
+                      "tagline",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                  <MapPin className="h-3.5 w-3.5" />
+                  Address
+                </label>
+
+                <input
+                  type="text"
+                  value={form.address}
+                  onChange={(event) =>
+                    updateField(
+                      "address",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                  <Phone className="h-3.5 w-3.5" />
+                  Phone
+                </label>
+
+                <input
+                  type="text"
+                  value={form.phone}
+                  onChange={(event) =>
+                    updateField(
+                      "phone",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                  <Mail className="h-3.5 w-3.5" />
+                  Email
+                </label>
+
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(event) =>
+                    updateField(
+                      "email",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                  <UserRound className="h-3.5 w-3.5" />
+                  Clinician Name
+                </label>
+
+                <input
+                  type="text"
+                  value={form.clinicianName}
+                  onChange={(event) =>
+                    updateField(
+                      "clinicianName",
+                      event.target.value,
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="mb-5 font-bold text-slate-900">
+              Inventory Alerts
+            </h2>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Expiry Alert Days
+                </label>
+
+                <input
+                  type="number"
+                  min={0}
+                  max={3650}
+                  value={form.expiryAlertDays}
+                  onChange={(event) =>
+                    updateField(
+                      "expiryAlertDays",
+                      Number(
+                        event.target.value,
+                      ),
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Alert when medicines are within this many days of expiry.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Reorder Alert Level
+                </label>
+
+                <input
+                  type="number"
+                  min={0}
+                  value={form.reorderAlertLevel}
+                  onChange={(event) =>
+                    updateField(
+                      "reorderAlertLevel",
+                      Number(
+                        event.target.value,
+                      ),
+                    )
+                  }
+                  disabled={!canEdit}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Medicines at or below this quantity are marked low stock.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {canEdit && (
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#22577A] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+
+                {isSaving
+                  ? "Saving..."
+                  : "Save Settings"}
+              </button>
+            </div>
+          )}
+        </form>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="rounded-xl bg-[#22577A]/10 p-2.5 text-[#22577A]">
+              <KeyRound className="h-5 w-5" />
+            </div>
+
+            <div>
+              <h2 className="font-bold text-slate-900">
+                Account Security
+              </h2>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Change the password for {currentUser.email}.
+              </p>
+            </div>
+          </div>
 
           {passwordError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{passwordError}</span>
             </div>
           )}
 
           {passwordSuccess && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{passwordSuccess}</span>
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <form
+            onSubmit={handleChangePassword}
+            className="space-y-4"
+          >
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Current Password *
+              <label className="mb-1 block text-xs font-semibold text-slate-700">
+                Current Password
               </label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={currentPasswordInput}
-                onChange={(e) => setCurrentPasswordInput(e.target.value)}
-                className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
+
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+
+                <input
+                  type={
+                    showCurrentPassword
+                      ? "text"
+                      : "password"
+                  }
+                  value={currentPassword}
+                  onChange={(event) =>
+                    setCurrentPassword(
+                      event.target.value,
+                    )
+                  }
+                  disabled={
+                    isChangingPassword
+                  }
+                  autoComplete="current-password"
+                  className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-11 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowCurrentPassword(
+                      (previous) =>
+                        !previous,
+                    )
+                  }
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700"
+                  aria-label={
+                    showCurrentPassword
+                      ? "Hide current password"
+                      : "Show current password"
+                  }
+                >
+                  {showCurrentPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                New Password *
-              </label>
-              <input
-                type="password"
-                required
-                placeholder="Min 6 characters"
-                value={newPasswordInput}
-                onChange={(e) => setNewPasswordInput(e.target.value)}
-                className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  New Password
+                </label>
+
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+
+                  <input
+                    type={
+                      showNewPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={newPassword}
+                    onChange={(event) =>
+                      setNewPassword(
+                        event.target.value,
+                      )
+                    }
+                    disabled={
+                      isChangingPassword
+                    }
+                    autoComplete="new-password"
+                    className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-11 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowNewPassword(
+                        (previous) =>
+                          !previous,
+                      )
+                    }
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700"
+                    aria-label={
+                      showNewPassword
+                        ? "Hide new password"
+                        : "Show new password"
+                    }
+                  >
+                    {showNewPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Minimum 8 characters.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Confirm New Password
+                </label>
+
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+
+                  <input
+                    type={
+                      showConfirmPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={confirmPassword}
+                    onChange={(event) =>
+                      setConfirmPassword(
+                        event.target.value,
+                      )
+                    }
+                    disabled={
+                      isChangingPassword
+                    }
+                    autoComplete="new-password"
+                    className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-11 text-sm outline-none focus:border-[#22577A] disabled:bg-slate-50"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowConfirmPassword(
+                        (previous) =>
+                          !previous,
+                      )
+                    }
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700"
+                    aria-label={
+                      showConfirmPassword
+                        ? "Hide password confirmation"
+                        : "Show password confirmation"
+                    }
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Confirm New Password *
-              </label>
-              <input
-                type="password"
-                required
-                placeholder="Repeat new password"
-                value={confirmPasswordInput}
-                onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden"
-              />
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={
+                  isChangingPassword
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-[#22577A] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isChangingPassword ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <KeyRound className="h-4 w-4" />
+                )}
+
+                {isChangingPassword
+                  ? "Changing Password..."
+                  : "Change Password"}
+              </button>
             </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="button"
-              onClick={onOpenAuthModal}
-              className="text-xs font-semibold text-[#22577A] hover:underline"
-            >
-              Forgot current password? Reset via Email OTP →
-            </button>
-
-            <button
-              type="submit"
-              className="px-5 py-2.5 text-xs font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-xs transition-colors flex items-center gap-2"
-            >
-              <KeyRound className="w-4 h-4" /> Update Password
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
-    </div>
+    </section>
   );
 };
 
+export default Settings;
