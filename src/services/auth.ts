@@ -1,4 +1,3 @@
-
 import apiRequest from "./api";
 
 import type {
@@ -26,29 +25,8 @@ interface AuthData {
   refreshToken: string;
 }
 
-interface LoginResponse {
-  success: boolean;
-  message?: string;
-  data?: AuthData;
-  errors?: unknown;
-}
-
-interface RegisterResponse {
-  success: boolean;
-  message?: string;
-  data?: AuthData;
-  errors?: unknown;
-}
-
 interface RefreshData {
   accessToken: string;
-}
-
-interface RefreshResponse {
-  success: boolean;
-  message?: string;
-  data?: RefreshData;
-  errors?: unknown;
 }
 
 const ACCESS_TOKEN_KEY =
@@ -133,11 +111,6 @@ const saveSession = (
     JSON.stringify(user),
   );
 
-  /*
-   * Remove the old prototype authentication
-   * session so it cannot interfere with the
-   * new backend authentication system.
-   */
   localStorage.removeItem(
     "pharmatrack_current_user",
   );
@@ -215,29 +188,13 @@ const getStoredUser =
   };
 
 const extractAuthData = (
-  response:
-    | LoginResponse
-    | RegisterResponse,
+  response: {
+    success?: boolean;
+    message?: string;
+    data?: AuthData;
+    errors?: unknown;
+  },
 ): AuthData => {
-  /*
-   * IMPORTANT:
-   *
-   * apiRequest.post() returns the complete
-   * backend response envelope:
-   *
-   * {
-   *   success: true,
-   *   message: "...",
-   *   data: {
-   *     user: {...},
-   *     accessToken: "...",
-   *     refreshToken: "..."
-   *   }
-   * }
-   *
-   * Therefore authentication data lives
-   * inside response.data.
-   */
   if (
     !response ||
     response.success !== true
@@ -283,15 +240,12 @@ const extractAuthData = (
 };
 
 export const authService = {
-  /**
-   * Login using the backend API.
-   */
   async login(
     email: string,
     password: string,
   ): Promise<UserAccount> {
     const response =
-      await apiRequest.post<LoginResponse>(
+      await apiRequest.post<AuthData>(
         "/auth/login",
         {
           email:
@@ -302,24 +256,8 @@ export const authService = {
         },
       );
 
-    /*
-     * FIX:
-     *
-     * Previously this code attempted:
-     *
-     * response.data.user
-     *
-     * But api.ts returns the entire backend
-     * envelope in response.data.
-     *
-     * Correct path:
-     *
-     * response.data.data.user
-     */
     const authData =
-      extractAuthData(
-        response.data,
-      );
+      extractAuthData(response);
 
     const user =
       toFrontendUser(
@@ -335,10 +273,6 @@ export const authService = {
     return user;
   },
 
-  /**
-   * Register a new account through the
-   * backend API.
-   */
   async register(
     input: {
       name: string;
@@ -349,7 +283,7 @@ export const authService = {
     },
   ): Promise<UserAccount> {
     const response =
-      await apiRequest.post<RegisterResponse>(
+      await apiRequest.post<AuthData>(
         "/auth/register",
         {
           name:
@@ -374,9 +308,7 @@ export const authService = {
       );
 
     const authData =
-      extractAuthData(
-        response.data,
-      );
+      extractAuthData(response);
 
     const user =
       toFrontendUser(
@@ -392,14 +324,6 @@ export const authService = {
     return user;
   },
 
-  /**
-   * Recover the current authenticated
-   * user from the browser session.
-   *
-   * The stored user is only a cached
-   * representation. App.tsx subsequently
-   * validates the session with the backend.
-   */
   async getCurrentUser():
     Promise<UserAccount | null> {
     const storedUser =
@@ -416,9 +340,6 @@ export const authService = {
     return storedUser;
   },
 
-  /**
-   * Refresh the short-lived access token.
-   */
   async refresh(): Promise<string> {
     const refreshToken =
       getRefreshToken();
@@ -430,7 +351,7 @@ export const authService = {
     }
 
     const response =
-      await apiRequest.post<RefreshResponse>(
+      await apiRequest.post<RefreshData>(
         "/auth/refresh",
         {
           refreshToken,
@@ -438,17 +359,16 @@ export const authService = {
       );
 
     if (
-      response.data?.success !==
-      true
+      response.success !== true
     ) {
       throw new Error(
-        response.data?.message ||
+        response.message ||
           "Unable to refresh authentication session.",
       );
     }
 
     const accessToken =
-      response.data.data
+      response.data
         ?.accessToken;
 
     if (!accessToken) {

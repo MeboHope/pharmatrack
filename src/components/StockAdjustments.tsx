@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import {
   Plus,
@@ -53,9 +52,6 @@ export const StockAdjustments: React.FC<
 
   const [reason, setReason] = useState("");
 
-  const [isLoading, setIsLoading] =
-    useState(false);
-
   const [isSaving, setIsSaving] =
     useState(false);
 
@@ -65,29 +61,16 @@ export const StockAdjustments: React.FC<
     (drug) => drug.id === selectedDrugId,
   );
 
-  const loadAdjustments = async () => {
-    setIsLoading(true);
-    setError("");
-
-    try {
-      const data =
-        await stockAdjustmentsService.list();
-
-      setItems(data);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load stock adjustments.",
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  /*
+   * Keep the local display synchronized
+   * with the parent data source.
+   *
+   * The parent is now the source of truth
+   * for the adjustment records.
+   */
   useEffect(() => {
-    void loadAdjustments();
-  }, []);
+    setItems(adjustments);
+  }, [adjustments]);
 
   const resetForm = () => {
     setSelectedDrugId("");
@@ -126,14 +109,19 @@ export const StockAdjustments: React.FC<
   ) => {
     event.preventDefault();
 
+    setError("");
+
     if (!selectedDrug) {
       setError("Please select a drug.");
       return;
     }
 
-    if (adjustedQty < 0) {
+    if (
+      !Number.isInteger(adjustedQty) ||
+      adjustedQty < 0
+    ) {
       setError(
-        "Adjusted quantity cannot be negative.",
+        "Adjusted quantity must be a non-negative whole number.",
       );
       return;
     }
@@ -144,7 +132,6 @@ export const StockAdjustments: React.FC<
     }
 
     setIsSaving(true);
-    setError("");
 
     try {
       const created =
@@ -155,14 +142,22 @@ export const StockAdjustments: React.FC<
           reason: reason.trim(),
         });
 
+      /*
+       * Update the display immediately.
+       * The parent callback then updates the
+       * application's central data state.
+       */
       setItems((previous) => [
         created,
-        ...previous,
+        ...previous.filter(
+          (item) => item.id !== created.id,
+        ),
       ]);
 
       onAddAdjustment?.(created);
 
-      closeModal();
+      setShowModal(false);
+      resetForm();
     } catch (err) {
       setError(
         err instanceof Error
@@ -188,38 +183,20 @@ export const StockAdjustments: React.FC<
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void loadAdjustments()}
-            disabled={isLoading}
-            className="px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 flex items-center gap-2"
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${
-                isLoading ? "animate-spin" : ""
-              }`}
-            />
-
-            Refresh
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setShowModal(true);
-            }}
-            className="px-4 py-2 text-xs font-bold text-white rounded-lg shadow-sm flex items-center gap-1.5"
-            style={{
-              backgroundColor: "#0d8065",
-            }}
-          >
-            <Plus className="w-4 h-4 stroke-[3]" />
-
-            Record Adjustment
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setError("");
+            setShowModal(true);
+          }}
+          className="px-4 py-2 text-xs font-bold text-white rounded-lg shadow-sm flex items-center gap-1.5"
+          style={{
+            backgroundColor: "#0d8065",
+          }}
+        >
+          <Plus className="w-4 h-4 stroke-[3]" />
+          Record Adjustment
+        </button>
       </div>
 
       {error && (
@@ -237,13 +214,7 @@ export const StockAdjustments: React.FC<
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6">
-        {isLoading && items.length === 0 ? (
-          <div className="py-12 flex items-center justify-center text-sm text-slate-500 gap-2">
-            <RefreshCw className="w-4 h-4 animate-spin" />
-
-            Loading adjustment records...
-          </div>
-        ) : items.length === 0 ? (
+        {items.length === 0 ? (
           <div className="py-12 text-center text-sm text-slate-500">
             No stock adjustments have been recorded yet.
           </div>
@@ -415,9 +386,8 @@ export const StockAdjustments: React.FC<
                   </div>
 
                   <div>
-                    <strong>Adjusted By:</strong>{" "}
-                    {settings.clinicianName ||
-                      "Pharmacist"}
+                    <strong>Pharmacy:</strong>{" "}
+                    {settings.pharmacyName}
                   </div>
                 </div>
               )}
@@ -433,13 +403,24 @@ export const StockAdjustments: React.FC<
                 <input
                   type="number"
                   min="0"
+                  step="1"
                   required
                   value={adjustedQty}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value =
+                      event.target.value;
+
                     setAdjustedQty(
-                      Number(event.target.value),
-                    )
-                  }
+                      value === ""
+                        ? 0
+                        : Math.max(
+                            0,
+                            Math.floor(
+                              Number(value) || 0,
+                            ),
+                          ),
+                    );
+                  }}
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-bold focus:border-[#22577A] focus:outline-none"
                 />
               </div>
@@ -456,7 +437,8 @@ export const StockAdjustments: React.FC<
                   value={adjType}
                   onChange={(event) =>
                     setAdjType(
-                      event.target.value as StockAdjustment["type"],
+                      event.target
+                        .value as StockAdjustment["type"],
                     )
                   }
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
@@ -493,7 +475,9 @@ export const StockAdjustments: React.FC<
                   placeholder="Explain why stock count was adjusted..."
                   value={reason}
                   onChange={(event) =>
-                    setReason(event.target.value)
+                    setReason(
+                      event.target.value,
+                    )
                   }
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
                 />

@@ -1,20 +1,30 @@
 import { Router } from "express";
 
-import { prisma } from "../prisma";
-import { authenticate } from "../middleware/auth";
+import { prisma } from "../prisma.js";
+
 import {
-  adminOnly,
-  pharmacyStaff,
-} from "../middleware/authorize";
+  authenticate,
+  requireRole,
+} from "../middleware/auth.js";
+
+import { recordAudit } from "../middleware/audit.js";
 
 const router = Router();
 
 router.use(authenticate);
 
+const patientStaff = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+  "CLINICIAN",
+);
+
+const adminOnly = requireRole("ADMIN");
+
 router.get(
   "/",
-  pharmacyStaff,
-  async (_request, response) => {
+  patientStaff,
+  async (_request, response, next) => {
     try {
       const patients =
         await prisma.patient.findMany({
@@ -28,24 +38,15 @@ router.get(
         data: patients,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch patients:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch patients.",
-      });
+      next(error);
     }
   },
 );
 
 router.get(
   "/:id",
-  pharmacyStaff,
-  async (request, response) => {
+  patientStaff,
+  async (request, response, next) => {
     try {
       const patient =
         await prisma.patient.findUnique({
@@ -67,24 +68,15 @@ router.get(
         data: patient,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch patient:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch patient.",
-      });
+      next(error);
     }
   },
 );
 
 router.post(
   "/",
-  pharmacyStaff,
-  async (request, response) => {
+  patientStaff,
+  async (request, response, next) => {
     try {
       const {
         name,
@@ -94,13 +86,75 @@ router.post(
         gender,
         address,
         allergies,
-      } = request.body;
+      } = request.body ?? {};
 
-      if (!name || !phone) {
+      if (
+        typeof name !== "string" ||
+        !name.trim()
+      ) {
         response.status(400).json({
           success: false,
           message:
-            "Patient name and phone are required.",
+            "Patient name is required.",
+        });
+        return;
+      }
+
+      if (
+        typeof phone !== "string" ||
+        !phone.trim()
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Patient phone number is required.",
+        });
+        return;
+      }
+
+      let parsedAge:
+        | number
+        | undefined;
+
+      if (
+        age !== undefined &&
+        age !== null &&
+        age !== ""
+      ) {
+        parsedAge = Number(age);
+
+        if (
+          !Number.isInteger(parsedAge) ||
+          parsedAge < 0 ||
+          parsedAge > 150
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Patient age must be a valid whole number between 0 and 150.",
+          });
+          return;
+        }
+      }
+
+      const validGenders = [
+        "MALE",
+        "FEMALE",
+        "OTHER",
+      ];
+
+      if (
+        gender !== undefined &&
+        gender !== null &&
+        gender !== "" &&
+        !validGenders.includes(
+          String(gender).toUpperCase(),
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Invalid patient gender.",
         });
         return;
       }
@@ -108,119 +162,272 @@ router.post(
       const patient =
         await prisma.patient.create({
           data: {
-            name: String(name).trim(),
-            phone: String(phone).trim(),
+            name: name.trim(),
+            phone: phone.trim(),
             email:
-              email
-                ? String(email).trim()
-                : undefined,
-            age:
-              age !== undefined &&
-              age !== null &&
-              age !== ""
-                ? Number(age)
-                : undefined,
+              typeof email === "string" &&
+              email.trim()
+                ? email.trim().toLowerCase()
+                : null,
+            age: parsedAge,
             gender:
-              gender || undefined,
+              gender !== undefined &&
+              gender !== null &&
+              gender !== ""
+                ? String(gender).toUpperCase() as
+                    "MALE" |
+                    "FEMALE" |
+                    "OTHER"
+                : undefined,
             address:
-              address
-                ? String(address).trim()
-                : undefined,
+              typeof address === "string" &&
+              address.trim()
+                ? address.trim()
+                : null,
             allergies:
-              allergies
-                ? String(allergies).trim()
-                : undefined,
+              typeof allergies === "string" &&
+              allergies.trim()
+                ? allergies.trim()
+                : null,
           },
         });
+
+      await recordAudit(request, {
+        action: "PATIENT_CREATED",
+        entity: "Patient",
+        entityId: patient.id,
+        details: {
+          patientId: patient.id,
+          name: patient.name,
+        },
+      });
 
       response.status(201).json({
         success: true,
         data: patient,
       });
     } catch (error) {
-      console.error(
-        "Failed to create patient:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to create patient.",
-      });
+      next(error);
     }
   },
 );
 
 router.put(
   "/:id",
-  pharmacyStaff,
-  async (request, response) => {
+  patientStaff,
+  async (request, response, next) => {
     try {
-      const patient =
-        await prisma.patient.update({
+      const existing =
+        await prisma.patient.findUnique({
           where: {
             id: request.params.id,
           },
-          data: {
-            name:
-              request.body.name !== undefined
-                ? String(
-                    request.body.name,
-                  ).trim()
-                : undefined,
-            phone:
-              request.body.phone !== undefined
-                ? String(
-                    request.body.phone,
-                  ).trim()
-                : undefined,
-            email:
-              request.body.email !== undefined
-                ? request.body.email
-                : undefined,
-            age:
-              request.body.age !== undefined
-                ? Number(
-                    request.body.age,
-                  )
-                : undefined,
-            gender:
-              request.body.gender !== undefined
-                ? request.body.gender
-                : undefined,
-            address:
-              request.body.address !== undefined
-                ? request.body.address
-                : undefined,
-            allergies:
-              request.body.allergies !== undefined
-                ? request.body.allergies
-                : undefined,
-            totalVisits:
-              request.body.totalVisits !== undefined
-                ? Number(
-                    request.body.totalVisits,
-                  )
-                : undefined,
-          },
         });
+
+      if (!existing) {
+        response.status(404).json({
+          success: false,
+          message: "Patient not found.",
+        });
+        return;
+      }
+
+      const body =
+        request.body ?? {};
+
+      const data: {
+        name?: string;
+        phone?: string;
+        email?: string | null;
+        age?: number | null;
+        gender?:
+          | "MALE"
+          | "FEMALE"
+          | "OTHER"
+          | null;
+        address?: string | null;
+        allergies?: string | null;
+        totalVisits?: number;
+      } = {};
+
+      if (body.name !== undefined) {
+        if (
+          typeof body.name !== "string" ||
+          !body.name.trim()
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Patient name cannot be empty.",
+          });
+          return;
+        }
+
+        data.name =
+          body.name.trim();
+      }
+
+      if (body.phone !== undefined) {
+        if (
+          typeof body.phone !== "string" ||
+          !body.phone.trim()
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Patient phone number cannot be empty.",
+          });
+          return;
+        }
+
+        data.phone =
+          body.phone.trim();
+      }
+
+      if (body.email !== undefined) {
+        data.email =
+          typeof body.email === "string" &&
+          body.email.trim()
+            ? body.email
+                .trim()
+                .toLowerCase()
+            : null;
+      }
+
+      if (body.age !== undefined) {
+        if (
+          body.age === null ||
+          body.age === ""
+        ) {
+          data.age = null;
+        } else {
+          const parsedAge =
+            Number(body.age);
+
+          if (
+            !Number.isInteger(
+              parsedAge,
+            ) ||
+            parsedAge < 0 ||
+            parsedAge > 150
+          ) {
+            response.status(400).json({
+              success: false,
+              message:
+                "Patient age must be a valid whole number between 0 and 150.",
+            });
+            return;
+          }
+
+          data.age = parsedAge;
+        }
+      }
+
+      if (body.gender !== undefined) {
+        if (
+          body.gender === null ||
+          body.gender === ""
+        ) {
+          data.gender = null;
+        } else {
+          const gender =
+            String(
+              body.gender,
+            ).toUpperCase();
+
+          if (
+            ![
+              "MALE",
+              "FEMALE",
+              "OTHER",
+            ].includes(gender)
+          ) {
+            response.status(400).json({
+              success: false,
+              message:
+                "Invalid patient gender.",
+            });
+            return;
+          }
+
+          data.gender =
+            gender as
+              | "MALE"
+              | "FEMALE"
+              | "OTHER";
+        }
+      }
+
+      if (body.address !== undefined) {
+        data.address =
+          typeof body.address === "string" &&
+          body.address.trim()
+            ? body.address.trim()
+            : null;
+      }
+
+      if (
+        body.allergies !==
+        undefined
+      ) {
+        data.allergies =
+          typeof body.allergies === "string" &&
+          body.allergies.trim()
+            ? body.allergies.trim()
+            : null;
+      }
+
+      if (
+        body.totalVisits !==
+        undefined
+      ) {
+        const totalVisits =
+          Number(
+            body.totalVisits,
+          );
+
+        if (
+          !Number.isInteger(
+            totalVisits,
+          ) ||
+          totalVisits < 0
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Total visits must be a valid non-negative whole number.",
+          });
+          return;
+        }
+
+        data.totalVisits =
+          totalVisits;
+      }
+
+      const patient =
+        await prisma.patient.update({
+          where: {
+            id: existing.id,
+          },
+          data,
+        });
+
+      await recordAudit(request, {
+        action: "PATIENT_UPDATED",
+        entity: "Patient",
+        entityId: patient.id,
+        details: {
+          patientId: patient.id,
+          name: patient.name,
+        },
+      });
 
       response.json({
         success: true,
         data: patient,
       });
     } catch (error) {
-      console.error(
-        "Failed to update patient:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to update patient.",
-      });
+      next(error);
     }
   },
 );
@@ -228,11 +435,36 @@ router.put(
 router.delete(
   "/:id",
   adminOnly,
-  async (request, response) => {
+  async (request, response, next) => {
     try {
+      const existing =
+        await prisma.patient.findUnique({
+          where: {
+            id: request.params.id,
+          },
+        });
+
+      if (!existing) {
+        response.status(404).json({
+          success: false,
+          message: "Patient not found.",
+        });
+        return;
+      }
+
       await prisma.patient.delete({
         where: {
-          id: request.params.id,
+          id: existing.id,
+        },
+      });
+
+      await recordAudit(request, {
+        action: "PATIENT_DELETED",
+        entity: "Patient",
+        entityId: existing.id,
+        details: {
+          patientId: existing.id,
+          name: existing.name,
         },
       });
 
@@ -242,16 +474,7 @@ router.delete(
           "Patient deleted successfully.",
       });
     } catch (error) {
-      console.error(
-        "Failed to delete patient:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to delete patient.",
-      });
+      next(error);
     }
   },
 );

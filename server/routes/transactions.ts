@@ -1,25 +1,45 @@
 import { Router } from "express";
 
 import { prisma } from "../prisma";
-import { authenticate } from "../middleware/auth";
 import {
-  pharmacistOnly,
-  pharmacyStaff,
-} from "../middleware/authorize";
+  authenticate,
+  requireRole,
+} from "../middleware/auth";
+import { recordAudit } from "../middleware/audit";
 
 const router = Router();
 
 router.use(authenticate);
 
+const pharmacyStaff = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+  "CLINICIAN",
+);
+
+const pharmacistOnly = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+);
+
 router.get(
   "/",
   pharmacyStaff,
-  async (_request, response) => {
+  async (request, response, next) => {
     try {
       const transactions =
         await prisma.dispenseTransaction.findMany({
           include: {
             items: true,
+            patient: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+            },
           },
           orderBy: {
             date: "desc",
@@ -31,16 +51,7 @@ router.get(
         data: transactions,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch transactions:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch transactions.",
-      });
+      next(error);
     }
   },
 );
@@ -48,7 +59,7 @@ router.get(
 router.get(
   "/:id",
   pharmacyStaff,
-  async (request, response) => {
+  async (request, response, next) => {
     try {
       const transaction =
         await prisma.dispenseTransaction.findUnique({
@@ -57,14 +68,22 @@ router.get(
           },
           include: {
             items: true,
+            patient: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+            },
           },
         });
 
       if (!transaction) {
         response.status(404).json({
           success: false,
-          message:
-            "Transaction not found.",
+          message: "Transaction not found.",
         });
         return;
       }
@@ -74,16 +93,7 @@ router.get(
         data: transaction,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch transaction:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch transaction.",
-      });
+      next(error);
     }
   },
 );
@@ -91,7 +101,7 @@ router.get(
 router.post(
   "/",
   pharmacistOnly,
-  async (request, response) => {
+  async (request, response, next) => {
     try {
       const {
         transactionNo,
@@ -111,19 +121,183 @@ router.post(
         status,
         patientId,
         items,
-      } = request.body;
+      } = request.body ?? {};
 
       if (
-        !patientName ||
-        !clinicianName ||
+        typeof patientName !== "string" ||
+        !patientName.trim()
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Patient name is required.",
+        });
+        return;
+      }
+
+      if (
+        typeof clinicianName !== "string" ||
+        !clinicianName.trim()
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Clinician name is required.",
+        });
+        return;
+      }
+
+      if (
         !paymentMethod ||
+        !["CASH", "MPESA"].includes(
+          String(paymentMethod),
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "A valid payment method is required.",
+        });
+        return;
+      }
+
+      if (
         !Array.isArray(items) ||
         items.length === 0
       ) {
         response.status(400).json({
           success: false,
           message:
-            "Incomplete transaction information.",
+            "At least one transaction item is required.",
+        });
+        return;
+      }
+
+      const parsedItems = items.map(
+        (
+          item: Record<string, unknown>,
+        ) => ({
+          drugId: String(item.drugId ?? ""),
+          drugCode: String(
+            item.drugCode ?? "",
+          ),
+          drugName: String(
+            item.drugName ?? "",
+          ),
+          batchNo: String(
+            item.batchNo ?? "",
+          ),
+          expiryDate: String(
+            item.expiryDate ?? "",
+          ),
+          availableQty: Number(
+            item.availableQty ?? 0,
+          ),
+          qty: Number(item.qty),
+          unitPrice: Number(
+            item.unitPrice ?? 0,
+          ),
+          frequency: item.frequency,
+          route: item.route,
+          duration: Number(
+            item.duration ?? 0,
+          ),
+          durationUnit: String(
+            item.durationUnit ?? "Days",
+          ),
+          specialInstructions:
+            item.specialInstructions
+              ? String(
+                  item.specialInstructions,
+                )
+              : undefined,
+          lineTotal: Number(
+            item.lineTotal ?? 0,
+          ),
+        }),
+      );
+
+      for (const item of parsedItems) {
+        if (
+          !item.drugId ||
+          !Number.isInteger(item.qty) ||
+          item.qty <= 0
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Each transaction item must contain a valid drug and positive quantity.",
+          });
+          return;
+        }
+
+        if (
+          !Number.isFinite(
+            item.unitPrice,
+          ) ||
+          item.unitPrice < 0
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Each transaction item must contain a valid unit price.",
+          });
+          return;
+        }
+
+        if (
+          !Number.isFinite(
+            item.lineTotal,
+          ) ||
+          item.lineTotal < 0
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Each transaction item must contain a valid line total.",
+          });
+          return;
+        }
+      }
+
+      if (
+        patientId !== undefined &&
+        patientId !== null &&
+        typeof patientId !== "string"
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Invalid patient ID.",
+        });
+        return;
+      }
+
+      const parsedSubtotal = Number(
+        subtotal ?? 0,
+      );
+      const parsedDiscount = Number(
+        discount ?? 0,
+      );
+      const parsedTotalAmount = Number(
+        totalAmount ?? 0,
+      );
+
+      if (
+        !Number.isFinite(
+          parsedSubtotal,
+        ) ||
+        parsedSubtotal < 0 ||
+        !Number.isFinite(
+          parsedDiscount,
+        ) ||
+        parsedDiscount < 0 ||
+        !Number.isFinite(
+          parsedTotalAmount,
+        ) ||
+        parsedTotalAmount < 0
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Invalid transaction totals.",
         });
         return;
       }
@@ -131,7 +305,34 @@ router.post(
       const transaction =
         await prisma.$transaction(
           async (database) => {
-            for (const item of items) {
+            if (patientId) {
+              const patient =
+                await database.patient.findUnique(
+                  {
+                    where: {
+                      id: patientId,
+                    },
+                  },
+                );
+
+              if (!patient) {
+                throw new Error(
+                  "The selected patient was not found.",
+                );
+              }
+            }
+
+            const drugSnapshots: Array<{
+              id: string;
+              code: string;
+              name: string;
+              batchNo: string;
+              expiryDate: Date;
+              availableQty: number;
+              qty: number;
+            }> = [];
+
+            for (const item of parsedItems) {
               const drug =
                 await database.drug.findUnique({
                   where: {
@@ -146,179 +347,209 @@ router.post(
               }
 
               if (
-                Number(item.qty) <= 0
+                drug.status ===
+                "EXPIRED"
               ) {
                 throw new Error(
-                  "Transaction quantity must be greater than zero.",
+                  `${drug.name} has expired and cannot be dispensed.`,
                 );
               }
 
               if (
-                drug.qty <
-                Number(item.qty)
+                drug.qty < item.qty
               ) {
                 throw new Error(
-                  `Insufficient stock for ${drug.name}.`,
+                  `Insufficient stock for ${drug.name}. Available quantity: ${drug.qty}.`,
                 );
               }
+
+              drugSnapshots.push({
+                id: drug.id,
+                code: drug.code,
+                name: drug.name,
+                batchNo: drug.batchNo,
+                expiryDate:
+                  drug.expiryDate,
+                availableQty: drug.qty,
+                qty: item.qty,
+              });
             }
+
+            const finalTransactionNo =
+              typeof transactionNo ===
+                "string" &&
+              transactionNo.trim()
+                ? transactionNo
+                    .trim()
+                : `TXN-${Date.now()}`;
 
             const created =
               await database.dispenseTransaction.create(
                 {
                   data: {
                     transactionNo:
-                      transactionNo ||
-                      `TXN-${Date.now()}`,
+                      finalTransactionNo,
+
                     patientType:
-                      patientType ||
-                      "WALK_IN",
+                      patientType ===
+                      "REGISTERED"
+                        ? "REGISTERED"
+                        : "WALK_IN",
+
                     patientName:
-                      String(
-                        patientName,
-                      ).trim(),
+                      patientName.trim(),
+
                     phone:
-                      phone
-                        ? String(phone).trim()
+                      typeof phone ===
+                        "string" &&
+                      phone.trim()
+                        ? phone.trim()
                         : undefined,
+
                     clinicianName:
-                      String(
-                        clinicianName,
-                      ).trim(),
+                      clinicianName.trim(),
+
                     prescriptionDate:
                       prescriptionDate
                         ? new Date(
-                            prescriptionDate,
+                            String(
+                              prescriptionDate,
+                            ),
                           )
                         : undefined,
+
                     diagnosis:
-                      diagnosis
-                        ? String(
-                            diagnosis,
-                          ).trim()
+                      typeof diagnosis ===
+                        "string" &&
+                      diagnosis.trim()
+                        ? diagnosis.trim()
                         : undefined,
+
                     subtotal:
-                      Number(
-                        subtotal ?? 0,
-                      ),
+                      parsedSubtotal,
+
                     discount:
-                      Number(
-                        discount ?? 0,
-                      ),
+                      parsedDiscount,
+
                     totalAmount:
-                      Number(
-                        totalAmount ?? 0,
-                      ),
-                    paymentMethod,
+                      parsedTotalAmount,
+
+                    paymentMethod:
+                      paymentMethod ===
+                      "MPESA"
+                        ? "MPESA"
+                        : "CASH",
+
                     cashTendered:
                       cashTendered !==
-                      undefined
+                        undefined &&
+                      cashTendered !==
+                        null
                         ? Number(
                             cashTendered,
                           )
                         : undefined,
+
                     changeAmount:
                       changeAmount !==
-                      undefined
+                        undefined &&
+                      changeAmount !==
+                        null
                         ? Number(
                             changeAmount,
                           )
                         : undefined,
+
                     mpesaCode:
-                      mpesaCode
-                        ? String(
-                            mpesaCode,
-                          ).trim()
+                      typeof mpesaCode ===
+                        "string" &&
+                      mpesaCode.trim()
+                        ? mpesaCode.trim()
                         : undefined,
+
                     status:
-                      status ||
-                      "COMPLETED",
+                      status ===
+                      "PENDING"
+                        ? "PENDING"
+                        : status ===
+                            "CANCELLED"
+                          ? "CANCELLED"
+                          : "COMPLETED",
+
                     patientId:
                       patientId ||
                       undefined,
+
                     userId:
-                      request.user?.id,
+                      request.auth?.sub,
+
                     items: {
                       create:
-                        items.map(
+                        parsedItems.map(
                           (
-                            item: Record<
-                              string,
-                              unknown
-                            >,
-                          ) => ({
-                            drugId:
-                              String(
-                                item.drugId,
-                              ),
-                            drugCode:
-                              String(
-                                item.drugCode,
-                              ),
-                            drugName:
-                              String(
-                                item.drugName,
-                              ),
-                            batchNo:
-                              String(
-                                item.batchNo,
-                              ),
-                            expiryDate:
-                              new Date(
-                                String(
-                                  item.expiryDate,
-                                ),
-                              ),
-                            availableQty:
-                              Number(
-                                item.availableQty ??
-                                  0,
-                              ),
-                            qty:
-                              Number(
+                            item,
+                            index,
+                          ) => {
+                            const drug =
+                              drugSnapshots[
+                                index
+                              ];
+
+                            return {
+                              drugId:
+                                drug.id,
+
+                              drugCode:
+                                drug.code,
+
+                              drugName:
+                                drug.name,
+
+                              batchNo:
+                                drug.batchNo,
+
+                              expiryDate:
+                                drug.expiryDate,
+
+                              availableQty:
+                                drug.availableQty,
+
+                              qty:
                                 item.qty,
-                              ),
-                            unitPrice:
-                              Number(
-                                item.unitPrice ??
-                                  0,
-                              ),
-                            frequency:
-                              item.frequency,
-                            route:
-                              item.route,
-                            duration:
-                              Number(
-                                item.duration ??
-                                  0,
-                              ),
-                            durationUnit:
-                              String(
-                                item.durationUnit ??
-                                  "Days",
-                              ),
-                            specialInstructions:
-                              item.specialInstructions
-                                ? String(
-                                    item.specialInstructions,
-                                  )
-                                : undefined,
-                            lineTotal:
-                              Number(
-                                item.lineTotal ??
-                                  0,
-                              ),
-                          }),
+
+                              unitPrice:
+                                item.unitPrice,
+
+                              frequency:
+                                item.frequency,
+
+                              route:
+                                item.route,
+
+                              duration:
+                                item.duration,
+
+                              durationUnit:
+                                item.durationUnit,
+
+                              specialInstructions:
+                                item.specialInstructions,
+
+                              lineTotal:
+                                item.lineTotal,
+                            };
+                          },
                         ),
                     },
                   },
+
                   include: {
                     items: true,
                   },
                 },
               );
 
-            for (const item of items) {
+            for (const item of parsedItems) {
               const drug =
                 await database.drug.findUnique({
                   where: {
@@ -327,31 +558,32 @@ router.post(
                 });
 
               if (!drug) {
-                continue;
+                throw new Error(
+                  `Drug ${item.drugId} was not found.`,
+                );
               }
 
               const newQty =
                 drug.qty -
-                Number(item.qty);
+                item.qty;
 
-              const status =
+              const newStatus =
                 newQty === 0
                   ? "OUT_OF_STOCK"
                   : newQty <= 10
                     ? "LOW_STOCK"
                     : "IN_STOCK";
 
-              await database.drug.update(
-                {
-                  where: {
-                    id: drug.id,
-                  },
-                  data: {
-                    qty: newQty,
-                    status,
-                  },
+              await database.drug.update({
+                where: {
+                  id: drug.id,
                 },
-              );
+                data: {
+                  qty: newQty,
+                  status:
+                    newStatus,
+                },
+              });
             }
 
             if (patientId) {
@@ -373,23 +605,36 @@ router.post(
           },
         );
 
+      await recordAudit(
+        request,
+        {
+          action:
+            "TRANSACTION_CREATED",
+          entity:
+            "DispenseTransaction",
+          entityId:
+            transaction.id,
+          details: {
+            transactionNo:
+              transaction.transactionNo,
+            patientName:
+              transaction.patientName,
+            totalAmount:
+              transaction.totalAmount,
+            paymentMethod:
+              transaction.paymentMethod,
+            itemCount:
+              transaction.items.length,
+          },
+        },
+      );
+
       response.status(201).json({
         success: true,
         data: transaction,
       });
     } catch (error) {
-      console.error(
-        "Failed to create transaction:",
-        error,
-      );
-
-      response.status(400).json({
-        success: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to complete transaction.",
-      });
+      next(error);
     }
   },
 );

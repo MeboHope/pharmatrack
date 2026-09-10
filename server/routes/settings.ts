@@ -12,11 +12,9 @@ const router = Router();
 router.use(authenticate);
 
 const canManageSettings = (
-request: AuthenticatedRequest,
+  request: AuthenticatedRequest,
 ): boolean => {
-const role = request.auth?.role;
-
-return role === "ADMIN" || role === "PHARMACIST";
+  return request.auth?.role === "ADMIN";
 };
 
 const normalizeSettings = (settings: {

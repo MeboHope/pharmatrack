@@ -1,51 +1,51 @@
-
 import { Router } from "express";
 
-import { auditService } from "../services/audit";
-import { authenticate } from "../middleware/auth";
-import { adminOnly } from "../middleware/authorize";
+import { auditService } from "../services/audit.js";
+import {
+  authenticate,
+  requireRole,
+} from "../middleware/auth.js";
 
 const router = Router();
 
-/*
- * All audit-log access requires authentication.
- *
- * Only administrators can view audit history because
- * audit records contain operational and security information.
- */
 router.use(authenticate);
-router.use(adminOnly);
+router.use(requireRole("ADMIN"));
 
-/**
- * GET /api/audit
- *
- * Query parameters:
- *   page
- *   limit
- *   entity
- *   action
- *   userId
- *   from
- *   to
- */
-router.get("/", async (request, response) => {
+router.get("/", async (request, response, next) => {
   try {
-    const page = Number(request.query.page ?? 1);
-    const limit = Number(request.query.limit ?? 25);
+    const parsedPage = Number(
+      request.query.page ?? 1,
+    );
+
+    const parsedLimit = Number(
+      request.query.limit ?? 25,
+    );
+
+    const page =
+      Number.isInteger(parsedPage) &&
+      parsedPage >= 1
+        ? parsedPage
+        : 1;
+
+    const limit =
+      Number.isInteger(parsedLimit) &&
+      parsedLimit >= 1
+        ? Math.min(parsedLimit, 100)
+        : 25;
 
     const entity =
       typeof request.query.entity === "string"
-        ? request.query.entity
+        ? request.query.entity.trim() || undefined
         : undefined;
 
     const action =
       typeof request.query.action === "string"
-        ? request.query.action
+        ? request.query.action.trim() || undefined
         : undefined;
 
     const userId =
       typeof request.query.userId === "string"
-        ? request.query.userId
+        ? request.query.userId.trim() || undefined
         : undefined;
 
     const from =
@@ -58,10 +58,7 @@ router.get("/", async (request, response) => {
         ? new Date(request.query.to)
         : undefined;
 
-    if (
-      from &&
-      Number.isNaN(from.getTime())
-    ) {
+    if (from && Number.isNaN(from.getTime())) {
       response.status(400).json({
         success: false,
         message: "Invalid 'from' date.",
@@ -69,10 +66,7 @@ router.get("/", async (request, response) => {
       return;
     }
 
-    if (
-      to &&
-      Number.isNaN(to.getTime())
-    ) {
+    if (to && Number.isNaN(to.getTime())) {
       response.status(400).json({
         success: false,
         message: "Invalid 'to' date.",
@@ -80,16 +74,24 @@ router.get("/", async (request, response) => {
       return;
     }
 
-    const result =
-      await auditService.list({
-        page,
-        limit,
-        entity,
-        action,
-        userId,
-        from,
-        to,
+    if (from && to && from > to) {
+      response.status(400).json({
+        success: false,
+        message:
+          "'from' date cannot be later than 'to' date.",
       });
+      return;
+    }
+
+    const result = await auditService.list({
+      page,
+      limit,
+      entity,
+      action,
+      userId,
+      from,
+      to,
+    });
 
     response.json({
       success: true,
@@ -97,26 +99,13 @@ router.get("/", async (request, response) => {
       pagination: result.pagination,
     });
   } catch (error) {
-    console.error(
-      "Failed to fetch audit logs:",
-      error,
-    );
-
-    response.status(500).json({
-      success: false,
-      message: "Failed to fetch audit logs.",
-    });
+    next(error);
   }
 });
 
-/**
- * GET /api/audit/:id
- *
- * Retrieve one audit record.
- */
 router.get(
   "/:id",
-  async (request, response) => {
+  async (request, response, next) => {
     try {
       const auditLog =
         await auditService.getById?.(
@@ -136,15 +125,7 @@ router.get(
         data: auditLog,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch audit log:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message: "Failed to fetch audit log.",
-      });
+      next(error);
     }
   },
 );

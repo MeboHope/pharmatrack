@@ -1,3 +1,4 @@
+
 import {
   useCallback,
   useEffect,
@@ -34,6 +35,10 @@ interface UseAuthResult {
 
   logout: () => Promise<void>;
 
+  syncAuthenticatedUser: (
+    user: UserAccount,
+  ) => void;
+
   clearError: () => void;
 }
 
@@ -56,6 +61,15 @@ export function useAuth(): UseAuthResult {
   const clearError = useCallback(() => {
     setError("");
   }, []);
+
+  const syncAuthenticatedUser =
+    useCallback(
+      (user: UserAccount) => {
+        setCurrentUser(user);
+        setError("");
+      },
+      [],
+    );
 
   const login = useCallback(
     async (
@@ -98,13 +112,11 @@ export function useAuth(): UseAuthResult {
       setError("");
 
       try {
-        /*
-         * The backend authentication service
-         * expects uppercase role values.
-         */
         const roleMap: Record<
           RegisterInput["role"],
-          "ADMIN" | "PHARMACIST" | "CLINICIAN"
+          "ADMIN" |
+            "PHARMACIST" |
+            "CLINICIAN"
         > = {
           Admin: "ADMIN",
           Pharmacist: "PHARMACIST",
@@ -154,10 +166,6 @@ export function useAuth(): UseAuthResult {
       setError("");
 
       try {
-        /*
-         * The current authService exposes
-         * clearSession() rather than logout().
-         */
         authService.clearSession();
       } catch (err) {
         const message =
@@ -178,25 +186,40 @@ export function useAuth(): UseAuthResult {
     let mounted = true;
 
     const restoreSession = async () => {
-      /*
-       * The current authService already restores
-       * the persisted user from local storage.
-       */
-      const storedUser =
-        authService.getStoredUser();
+      try {
+        const storedUser =
+          authService.getStoredUser();
 
-      if (!authService.isAuthenticated()) {
-        if (mounted) {
-          setCurrentUser(null);
-          setIsLoading(false);
+        if (
+          !storedUser ||
+          !authService.isAuthenticated()
+        ) {
+          if (mounted) {
+            setCurrentUser(null);
+          }
+
+          return;
         }
 
-        return;
-      }
+        if (mounted) {
+          setCurrentUser(
+            storedUser,
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Failed to restore authentication session:",
+          error,
+        );
 
-      if (mounted) {
-        setCurrentUser(storedUser);
-        setIsLoading(false);
+        if (mounted) {
+          authService.clearSession();
+          setCurrentUser(null);
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -214,6 +237,7 @@ export function useAuth(): UseAuthResult {
     login,
     register,
     logout,
+    syncAuthenticatedUser,
     clearError,
   };
 }

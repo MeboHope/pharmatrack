@@ -1,24 +1,18 @@
-
-import {
-  useCallback,
-  useEffect,
-  useState,
-} from "react";
-
+import { useCallback, useEffect, useState } from "react";
 import type {
   Drug,
-  PatientRecord,
-  Supplier,
   DispenseTransaction,
-  StockAdjustment,
+  PatientRecord,
   PharmacySettings,
+  StockAdjustment,
+  Supplier,
+  UserAccount,
 } from "../types";
+import { pharmacyDataService } from "../services/pharmacyData";
 
-import {
-  pharmacyDataService,
-} from "../services/pharmacyData";
+type AppRole = "ADMIN" | "PHARMACIST" | "CLINICIAN";
 
-interface UsePharmacyDataResult {
+export interface UsePharmacyDataResult {
   drugs: Drug[];
   patients: PatientRecord[];
   suppliers: Supplier[];
@@ -27,10 +21,9 @@ interface UsePharmacyDataResult {
   settings: PharmacySettings | null;
 
   isLoading: boolean;
-  error: string;
+  error: string | null;
 
   refresh: () => Promise<void>;
-
   refreshDrugs: () => Promise<void>;
   refreshPatients: () => Promise<void>;
   refreshSuppliers: () => Promise<void>;
@@ -38,68 +31,99 @@ interface UsePharmacyDataResult {
   refreshAdjustments: () => Promise<void>;
   refreshSettings: () => Promise<void>;
 
-  createDrug: (
-    input: Partial<Drug>,
-  ) => Promise<Drug>;
-
-  updateDrug: (
-    id: string,
-    input: Partial<Drug>,
-  ) => Promise<Drug>;
-
-  deleteDrug: (
-    id: string,
-  ) => Promise<void>;
-
-  receiveStock: (input: {
-    drugId: string;
-    qtyReceived: number;
-    invoiceNo?: string;
-    buyingPrice?: number;
-  }) => Promise<Drug>;
+  createDrug: (data: Partial<Drug>) => Promise<Drug>;
+  updateDrug: (id: string, data: Partial<Drug>) => Promise<Drug>;
+  deleteDrug: (id: string) => Promise<void>;
 
   createPatient: (
-    input: Partial<PatientRecord>,
+    data: Partial<PatientRecord>,
   ) => Promise<PatientRecord>;
 
   updatePatient: (
     id: string,
-    input: Partial<PatientRecord>,
+    data: Partial<PatientRecord>,
   ) => Promise<PatientRecord>;
 
-  deletePatient: (
-    id: string,
-  ) => Promise<void>;
+  deletePatient: (id: string) => Promise<void>;
 
   createSupplier: (
-    input: Partial<Supplier>,
+    data: Partial<Supplier>,
   ) => Promise<Supplier>;
 
   updateSupplier: (
     id: string,
-    input: Partial<Supplier>,
+    data: Partial<Supplier>,
   ) => Promise<Supplier>;
 
-  deleteSupplier: (
-    id: string,
-  ) => Promise<void>;
-
-  createAdjustment: (
-    input: Partial<StockAdjustment>,
-  ) => Promise<StockAdjustment>;
+  deleteSupplier: (id: string) => Promise<void>;
 
   createTransaction: (
-    input: Partial<DispenseTransaction>,
+    data: Partial<DispenseTransaction>,
   ) => Promise<DispenseTransaction>;
 
+  createAdjustment: (
+    data: Partial<StockAdjustment>,
+  ) => Promise<StockAdjustment>;
+
+  receiveStock: (
+    drugId: string,
+    qtyReceived: number,
+    invoiceNo?: string,
+    buyingPrice?: number,
+  ) => Promise<{
+    drug: Drug;
+    receiving: {
+      invoiceNo: string;
+      quantityReceived: number;
+    };
+  }>;
+
   updateSettings: (
-    input: Partial<PharmacySettings>,
+    data: Partial<PharmacySettings>,
   ) => Promise<PharmacySettings>;
 
   clearError: () => void;
 }
 
-export function usePharmacyData(): UsePharmacyDataResult {
+const normalizeRole = (
+  role: unknown,
+): AppRole | null => {
+  const normalized = String(role ?? "")
+    .trim()
+    .toUpperCase();
+
+  if (
+    normalized === "ADMIN" ||
+    normalized === "PHARMACIST" ||
+    normalized === "CLINICIAN"
+  ) {
+    return normalized;
+  }
+
+  return null;
+};
+
+const canAccessDrugs = (
+  role: AppRole,
+): boolean =>
+  role === "ADMIN" ||
+  role === "PHARMACIST";
+
+const canAccessSuppliers = (
+  role: AppRole,
+): boolean =>
+  role === "ADMIN" ||
+  role === "PHARMACIST";
+
+const canAccessAdjustments = (
+  role: AppRole,
+): boolean =>
+  role === "ADMIN" ||
+  role === "PHARMACIST";
+
+export function usePharmacyData(
+  currentUser: UserAccount | null,
+): UsePharmacyDataResult {
   const [drugs, setDrugs] =
     useState<Drug[]>([]);
 
@@ -122,41 +146,36 @@ export function usePharmacyData(): UsePharmacyDataResult {
     useState(true);
 
   const [error, setError] =
-    useState("");
+    useState<string | null>(null);
 
-  const clearError = useCallback(() => {
-    setError("");
-  }, []);
+  const clearError =
+    useCallback(() => {
+      setError(null);
+    }, []);
 
-  const refreshDrugs = useCallback(
-    async () => {
+  const refreshDrugs =
+    useCallback(async () => {
       const data =
         await pharmacyDataService.getDrugs();
 
       setDrugs(data);
-    },
-    [],
-  );
+    }, []);
 
-  const refreshPatients = useCallback(
-    async () => {
+  const refreshPatients =
+    useCallback(async () => {
       const data =
         await pharmacyDataService.getPatients();
 
       setPatients(data);
-    },
-    [],
-  );
+    }, []);
 
-  const refreshSuppliers = useCallback(
-    async () => {
+  const refreshSuppliers =
+    useCallback(async () => {
       const data =
         await pharmacyDataService.getSuppliers();
 
       setSuppliers(data);
-    },
-    [],
-  );
+    }, []);
 
   const refreshTransactions =
     useCallback(async () => {
@@ -182,252 +201,116 @@ export function usePharmacyData(): UsePharmacyDataResult {
       setSettings(data);
     }, []);
 
-  const refresh = useCallback(async () => {
-    setIsLoading(true);
-    setError("");
+  const refresh =
+    useCallback(async () => {
+      if (!currentUser) {
+        setDrugs([]);
+        setPatients([]);
+        setSuppliers([]);
+        setTransactions([]);
+        setAdjustments([]);
+        setSettings(null);
+        setError(null);
+        setIsLoading(false);
+        return;
+      }
 
-    try {
-      const [
-        drugsData,
-        patientsData,
-        suppliersData,
-        transactionsData,
-        adjustmentsData,
-        settingsData,
-      ] = await Promise.all([
-        pharmacyDataService.getDrugs(),
-        pharmacyDataService.getPatients(),
-        pharmacyDataService.getSuppliers(),
-        pharmacyDataService.getTransactions(),
-        pharmacyDataService.getStockAdjustments(),
-        pharmacyDataService.getSettings(),
-      ]);
+      const role =
+        normalizeRole(currentUser.role);
 
-      setDrugs(drugsData);
-      setPatients(patientsData);
-      setSuppliers(suppliersData);
-      setTransactions(transactionsData);
-      setAdjustments(adjustmentsData);
-      setSettings(settingsData);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load pharmacy data.",
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      if (!role) {
+        setError(
+          "Unable to determine the authenticated user's role.",
+        );
+        setIsLoading(false);
+        return;
+      }
 
-  const createDrug = useCallback(
-    async (
-      input: Partial<Drug>,
-    ) => {
-      const created =
-        await pharmacyDataService.createDrug(
-          input,
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const requests: Promise<unknown>[] =
+          [];
+
+        if (canAccessDrugs(role)) {
+          requests.push(
+            pharmacyDataService
+              .getDrugs()
+              .then(setDrugs),
+          );
+        } else {
+          setDrugs([]);
+        }
+
+        requests.push(
+          pharmacyDataService
+            .getPatients()
+            .then(setPatients),
         );
 
-      setDrugs((previous) => [
-        created,
-        ...previous,
-      ]);
+        if (canAccessSuppliers(role)) {
+          requests.push(
+            pharmacyDataService
+              .getSuppliers()
+              .then(setSuppliers),
+          );
+        } else {
+          setSuppliers([]);
+        }
 
-      return created;
-    },
-    [],
-  );
-
-  const updateDrug = useCallback(
-    async (
-      id: string,
-      input: Partial<Drug>,
-    ) => {
-      const updated =
-        await pharmacyDataService.updateDrug(
-          id,
-          input,
+        requests.push(
+          pharmacyDataService
+            .getTransactions()
+            .then(setTransactions),
         );
 
-      setDrugs((previous) =>
-        previous.map((drug) =>
-          drug.id === id
-            ? updated
-            : drug,
-        ),
-      );
+        if (canAccessAdjustments(role)) {
+          requests.push(
+            pharmacyDataService
+              .getStockAdjustments()
+              .then(setAdjustments),
+          );
+        } else {
+          setAdjustments([]);
+        }
 
-      return updated;
-    },
-    [],
-  );
-
-  const deleteDrug = useCallback(
-    async (id: string) => {
-      await pharmacyDataService.deleteDrug(
-        id,
-      );
-
-      setDrugs((previous) =>
-        previous.filter(
-          (drug) => drug.id !== id,
-        ),
-      );
-    },
-    [],
-  );
-
-  const receiveStock = useCallback(
-    async (input: {
-      drugId: string;
-      qtyReceived: number;
-      invoiceNo?: string;
-      buyingPrice?: number;
-    }): Promise<Drug> => {
-      const result =
-        await pharmacyDataService.receiveStock(
-          input,
+        requests.push(
+          pharmacyDataService
+            .getSettings()
+            .then(setSettings),
         );
 
-      await refreshDrugs();
-
-      return result.drug;
-    },
-    [refreshDrugs],
-  );
-
-  const createPatient = useCallback(
-    async (
-      input: Partial<PatientRecord>,
-    ) => {
-      const created =
-        await pharmacyDataService.createPatient(
-          input,
+        await Promise.all(requests);
+      } catch (requestError) {
+        console.error(
+          "Failed to load PharmaTrack data:",
+          requestError,
         );
 
-      setPatients((previous) => [
-        created,
-        ...previous,
-      ]);
-
-      return created;
-    },
-    [],
-  );
-
-  const updatePatient = useCallback(
-    async (
-      id: string,
-      input: Partial<PatientRecord>,
-    ) => {
-      const updated =
-        await pharmacyDataService.updatePatient(
-          id,
-          input,
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Failed to load PharmaTrack data.",
         );
+      } finally {
+        setIsLoading(false);
+      }
+    }, [currentUser]);
 
-      setPatients((previous) =>
-        previous.map((patient) =>
-          patient.id === id
-            ? updated
-            : patient,
-        ),
-      );
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
-      return updated;
-    },
-    [],
-  );
-
-  const deletePatient = useCallback(
-    async (id: string) => {
-      await pharmacyDataService.deletePatient(
-        id,
-      );
-
-      setPatients((previous) =>
-        previous.filter(
-          (patient) => patient.id !== id,
-        ),
-      );
-    },
-    [],
-  );
-
-  const createSupplier = useCallback(
-    async (
-      input: Partial<Supplier>,
-    ) => {
-      const created =
-        await pharmacyDataService.createSupplier(
-          input,
-        );
-
-      setSuppliers((previous) => [
-        created,
-        ...previous,
-      ]);
-
-      return created;
-    },
-    [],
-  );
-
-  const updateSupplier = useCallback(
-    async (
-      id: string,
-      input: Partial<Supplier>,
-    ) => {
-      const updated =
-        await pharmacyDataService.updateSupplier(
-          id,
-          input,
-        );
-
-      setSuppliers((previous) =>
-        previous.map((supplier) =>
-          supplier.id === id
-            ? updated
-            : supplier,
-        ),
-      );
-
-      return updated;
-    },
-    [],
-  );
-
-  const deleteSupplier = useCallback(
-    async (id: string) => {
-      await pharmacyDataService.deleteSupplier(
-        id,
-      );
-
-      setSuppliers((previous) =>
-        previous.filter(
-          (supplier) =>
-            supplier.id !== id,
-        ),
-      );
-    },
-    [],
-  );
-
-  const createAdjustment =
+  const createDrug =
     useCallback(
       async (
-        input: Partial<StockAdjustment>,
+        data: Partial<Drug>,
       ) => {
         const created =
-          await pharmacyDataService.createStockAdjustment(
-            input,
+          await pharmacyDataService.createDrug(
+            data,
           );
-
-        setAdjustments((previous) => [
-          created,
-          ...previous,
-        ]);
 
         await refreshDrugs();
 
@@ -436,42 +319,234 @@ export function usePharmacyData(): UsePharmacyDataResult {
       [refreshDrugs],
     );
 
+  const updateDrug =
+    useCallback(
+      async (
+        id: string,
+        data: Partial<Drug>,
+      ) => {
+        const updated =
+          await pharmacyDataService.updateDrug(
+            id,
+            data,
+          );
+
+        await refreshDrugs();
+
+        return updated;
+      },
+      [refreshDrugs],
+    );
+
+  const deleteDrug =
+    useCallback(
+      async (id: string) => {
+        await pharmacyDataService.deleteDrug(
+          id,
+        );
+
+        await refreshDrugs();
+      },
+      [refreshDrugs],
+    );
+
+  const createPatient =
+    useCallback(
+      async (
+        data: Partial<PatientRecord>,
+      ) => {
+        const created =
+          await pharmacyDataService.createPatient(
+            data,
+          );
+
+        await refreshPatients();
+
+        return created;
+      },
+      [refreshPatients],
+    );
+
+  const updatePatient =
+    useCallback(
+      async (
+        id: string,
+        data: Partial<PatientRecord>,
+      ) => {
+        const updated =
+          await pharmacyDataService.updatePatient(
+            id,
+            data,
+          );
+
+        await refreshPatients();
+
+        return updated;
+      },
+      [refreshPatients],
+    );
+
+  const deletePatient =
+    useCallback(
+      async (id: string) => {
+        await pharmacyDataService.deletePatient(
+          id,
+        );
+
+        await refreshPatients();
+      },
+      [refreshPatients],
+    );
+
+  const createSupplier =
+    useCallback(
+      async (
+        data: Partial<Supplier>,
+      ) => {
+        const created =
+          await pharmacyDataService.createSupplier(
+            data,
+          );
+
+        await refreshSuppliers();
+
+        return created;
+      },
+      [refreshSuppliers],
+    );
+
+  const updateSupplier =
+    useCallback(
+      async (
+        id: string,
+        data: Partial<Supplier>,
+      ) => {
+        const updated =
+          await pharmacyDataService.updateSupplier(
+            id,
+            data,
+          );
+
+        await refreshSuppliers();
+
+        return updated;
+      },
+      [refreshSuppliers],
+    );
+
+  const deleteSupplier =
+    useCallback(
+      async (id: string) => {
+        await pharmacyDataService.deleteSupplier(
+          id,
+        );
+
+        await refreshSuppliers();
+      },
+      [refreshSuppliers],
+    );
+
   const createTransaction =
     useCallback(
       async (
-        input: Partial<DispenseTransaction>,
+        data: Partial<DispenseTransaction>,
       ) => {
         const created =
           await pharmacyDataService.createTransaction(
-            input,
+            data,
           );
 
-        setTransactions((previous) => [
-          created,
-          ...previous,
-        ]);
+        await refreshTransactions();
+        await refreshPatients();
 
-        await Promise.all([
-          refreshDrugs(),
-          refreshPatients(),
-        ]);
+        const role =
+          normalizeRole(
+            currentUser?.role,
+          );
+
+        if (
+          role &&
+          canAccessDrugs(role)
+        ) {
+          await refreshDrugs();
+        }
 
         return created;
       },
       [
+        currentUser?.role,
         refreshDrugs,
         refreshPatients,
+        refreshTransactions,
       ],
+    );
+
+  const createAdjustment =
+    useCallback(
+      async (
+        data: Partial<StockAdjustment>,
+      ) => {
+        const created =
+          await pharmacyDataService.createStockAdjustment(
+            data,
+          );
+
+        await refreshAdjustments();
+
+        const role =
+          normalizeRole(
+            currentUser?.role,
+          );
+
+        if (
+          role &&
+          canAccessDrugs(role)
+        ) {
+          await refreshDrugs();
+        }
+
+        return created;
+      },
+      [
+        currentUser?.role,
+        refreshAdjustments,
+        refreshDrugs,
+      ],
+    );
+
+  const receiveStock =
+    useCallback(
+      async (
+        drugId: string,
+        qtyReceived: number,
+        invoiceNo?: string,
+        buyingPrice?: number,
+      ) => {
+        const updated =
+          await pharmacyDataService.receiveStock(
+            {
+              drugId,
+              qtyReceived,
+              invoiceNo,
+              buyingPrice,
+            },
+          );
+
+        await refreshDrugs();
+
+        return updated;
+      },
+      [refreshDrugs],
     );
 
   const updateSettings =
     useCallback(
       async (
-        input: Partial<PharmacySettings>,
+        data: Partial<PharmacySettings>,
       ) => {
         const updated =
           await pharmacyDataService.updateSettings(
-            input,
+            data,
           );
 
         setSettings(updated);
@@ -480,10 +555,6 @@ export function usePharmacyData(): UsePharmacyDataResult {
       },
       [],
     );
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   return {
     drugs,
@@ -497,7 +568,6 @@ export function usePharmacyData(): UsePharmacyDataResult {
     error,
 
     refresh,
-
     refreshDrugs,
     refreshPatients,
     refreshSuppliers,
@@ -509,8 +579,6 @@ export function usePharmacyData(): UsePharmacyDataResult {
     updateDrug,
     deleteDrug,
 
-    receiveStock,
-
     createPatient,
     updatePatient,
     deletePatient,
@@ -519,8 +587,10 @@ export function usePharmacyData(): UsePharmacyDataResult {
     updateSupplier,
     deleteSupplier,
 
-    createAdjustment,
     createTransaction,
+    createAdjustment,
+
+    receiveStock,
 
     updateSettings,
 

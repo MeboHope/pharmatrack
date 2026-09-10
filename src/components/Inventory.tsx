@@ -28,150 +28,85 @@ interface InventoryProps {
     qty: number,
     invoiceNo: string,
     buyingPrice?: number,
-  ) => Promise<void>;
+  ) => Promise<{
+    drug: Drug;
+    receiving: {
+      invoiceNo: string;
+      quantityReceived: number;
+    };
+  }>;
 }
 
-export const Inventory: React.FC<
-  InventoryProps
-> = ({
+export const Inventory: React.FC<InventoryProps> = ({
   drugs,
   settings,
   onAddDrug,
   onEditDrug,
   onReceiveStockSubmit,
 }) => {
-  const [
-    activeSubTab,
-    setActiveSubTab,
-  ] = useState<
+  const [activeSubTab, setActiveSubTab] = useState<
     "database" | "receive"
   >("database");
 
-  // Search and filters
-  const [searchQuery, setSearchQuery] =
-    useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const [
-    categoryFilter,
-    setCategoryFilter,
-  ] = useState("all");
+  const [sortField, setSortField] = useState<
+    keyof Drug | ""
+  >("");
 
-  const [
-    statusFilter,
-    setStatusFilter,
-  ] = useState("all");
-
-  const [
-    sortField,
-    setSortField,
-  ] = useState<keyof Drug | "">("");
-
-  const [
-    sortOrder,
-    setSortOrder,
-  ] = useState<
+  const [sortOrder, setSortOrder] = useState<
     "asc" | "desc"
   >("asc");
 
-  // Receive stock
-  const [
-    receiveSearch,
-    setReceiveSearch,
-  ] = useState("");
+  const [receiveSearch, setReceiveSearch] = useState("");
+  const [selectedDrug, setSelectedDrug] =
+    useState<Drug | null>(null);
 
-  const [
-    selectedDrug,
-    setSelectedDrug,
-  ] = useState<Drug | null>(
-    null,
-  );
+  const [receiveQty, setReceiveQty] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [receiveBuyingPrice, setReceiveBuyingPrice] =
+    useState("");
 
-  const [
-    receiveQty,
-    setReceiveQty,
-  ] = useState("");
+  const [receiveSuccess, setReceiveSuccess] =
+    useState<string | null>(null);
 
-  const [
-    invoiceNo,
-    setInvoiceNo,
-  ] = useState("");
+  const [receiveError, setReceiveError] =
+    useState<string | null>(null);
 
-  const [
-    receiveBuyingPrice,
-    setReceiveBuyingPrice,
-  ] = useState("");
+  const [isReceiving, setIsReceiving] =
+    useState(false);
 
-  const [
-    receiveSuccess,
-    setReceiveSuccess,
-  ] = useState<string | null>(
-    null,
-  );
+  const filteredDrugs = drugs.filter((drug) => {
+    const query = searchQuery.trim().toLowerCase();
 
-  const [
-    receiveError,
-    setReceiveError,
-  ] = useState<string | null>(
-    null,
-  );
+    const matchesSearch =
+      !query ||
+      drug.name.toLowerCase().includes(query) ||
+      drug.code.toLowerCase().includes(query) ||
+      drug.genericName.toLowerCase().includes(query) ||
+      drug.batchNo.toLowerCase().includes(query);
 
-  const [
-    isReceiving,
-    setIsReceiving,
-  ] = useState(false);
+    const matchesCategory =
+      categoryFilter === "all" ||
+      drug.category === categoryFilter;
 
-  // Filter database
-  const filteredDrugs =
-    drugs.filter((drug) => {
-      const query =
-        searchQuery
-          .trim()
-          .toLowerCase();
+    const matchesStatus =
+      statusFilter === "all" ||
+      drug.status === statusFilter;
 
-      const matchesSearch =
-        !query ||
-        drug.name
-          .toLowerCase()
-          .includes(query) ||
-        drug.code
-          .toLowerCase()
-          .includes(query) ||
-        drug.genericName
-          .toLowerCase()
-          .includes(query) ||
-        drug.batchNo
-          .toLowerCase()
-          .includes(query);
+    return (
+      matchesSearch &&
+      matchesCategory &&
+      matchesStatus
+    );
+  });
 
-      const matchesCategory =
-        categoryFilter === "all" ||
-        drug.category ===
-          categoryFilter;
-
-      const matchesStatus =
-        statusFilter === "all" ||
-        drug.status ===
-          statusFilter;
-
-      return (
-        matchesSearch &&
-        matchesCategory &&
-        matchesStatus
-      );
-    });
-
-  // Sorting
-  const handleSort = (
-    field: keyof Drug,
-  ) => {
-    if (
-      sortField === field
-    ) {
-      setSortOrder(
-        (previous) =>
-          previous === "asc"
-            ? "desc"
-            : "asc",
+  const handleSort = (field: keyof Drug) => {
+    if (sortField === field) {
+      setSortOrder((previous) =>
+        previous === "asc" ? "desc" : "asc",
       );
     } else {
       setSortField(field);
@@ -179,172 +114,131 @@ export const Inventory: React.FC<
     }
   };
 
-  const sortedDrugs =
-    [...filteredDrugs].sort(
-      (a, b) => {
-        if (!sortField) {
-          return 0;
-        }
-
-        const aValue =
-          a[sortField];
-
-        const bValue =
-          b[sortField];
-
-        if (
-          aValue === undefined ||
-          bValue === undefined
-        ) {
-          return 0;
-        }
-
-        if (
-          aValue < bValue
-        ) {
-          return sortOrder ===
-            "asc"
-            ? -1
-            : 1;
-        }
-
-        if (
-          aValue > bValue
-        ) {
-          return sortOrder ===
-            "asc"
-            ? 1
-            : -1;
-        }
-
+  const sortedDrugs = [...filteredDrugs].sort(
+    (a, b) => {
+      if (!sortField) {
         return 0;
-      },
-    );
+      }
 
-  // Receive-stock search
-  const receiveMatchingDrugs =
-    drugs.filter((drug) => {
+      const aValue = a[sortField];
+      const bValue = b[sortField];
+
+      if (
+        aValue === undefined ||
+        bValue === undefined
+      ) {
+        return 0;
+      }
+
+      if (aValue < bValue) {
+        return sortOrder === "asc" ? -1 : 1;
+      }
+
+      if (aValue > bValue) {
+        return sortOrder === "asc" ? 1 : -1;
+      }
+
+      return 0;
+    },
+  );
+
+  const receiveMatchingDrugs = drugs.filter(
+    (drug) => {
       const query =
-        receiveSearch
-          .trim()
-          .toLowerCase();
+        receiveSearch.trim().toLowerCase();
 
       if (!query) {
         return false;
       }
 
       return (
-        drug.name
-          .toLowerCase()
-          .includes(query) ||
-        drug.code
-          .toLowerCase()
-          .includes(query) ||
+        drug.name.toLowerCase().includes(query) ||
+        drug.code.toLowerCase().includes(query) ||
         drug.genericName
           .toLowerCase()
           .includes(query)
       );
-    });
+    },
+  );
 
-  // Excel export
-  const handleExportExcel =
-    () => {
-      const exportData =
-        filteredDrugs.map(
-          (drug) => ({
-            Code: drug.code,
-            "Drug Name":
-              drug.name,
-            "Generic Name":
-              drug.genericName,
-            Category:
-              drug.category,
-            Formulation:
-              drug.formulation,
-            "Batch No":
-              drug.batchNo,
-            "Expiry Date":
-              drug.expiryDate,
-            "Qty in Stock":
-              drug.qty,
-            Unit: drug.unit,
-            "Buying Price":
-              drug.buyingPrice,
-            "Selling Price":
-              drug.sellingPrice,
-            Status:
-              drug.status,
-          }),
-        );
+  const handleExportExcel = () => {
+    const exportData = filteredDrugs.map(
+      (drug) => ({
+        Code: drug.code,
+        "Drug Name": drug.name,
+        "Generic Name": drug.genericName,
+        Category: drug.category,
+        Formulation: drug.formulation,
+        "Batch No": drug.batchNo,
+        "Expiry Date": drug.expiryDate,
+        "Qty in Stock": drug.qty,
+        Unit: drug.unit,
+        "Buying Price": drug.buyingPrice,
+        "Selling Price": drug.sellingPrice,
+        Status: drug.status,
+      }),
+    );
 
-      exportToExcel(
-        exportData,
-        `PharmaTrack_Inventory_${new Date()
-          .toISOString()
-          .slice(0, 10)}`,
-        "Inventory",
+    exportToExcel(
+      exportData,
+      `PharmaTrack_Inventory_${new Date()
+        .toISOString()
+        .slice(0, 10)}`,
+      "Inventory",
+    );
+  };
+
+  const handleProcessReception = async (
+    e: React.FormEvent,
+  ) => {
+    e.preventDefault();
+
+    setReceiveError(null);
+    setReceiveSuccess(null);
+
+    if (!selectedDrug) {
+      setReceiveError(
+        "Please select a drug.",
       );
-    };
+      return;
+    }
 
-  // Process stock reception
-  const handleProcessReception =
-    async (
-      e: React.FormEvent,
-    ) => {
-      e.preventDefault();
+    const quantity = Number(receiveQty);
 
-      setReceiveError(null);
-      setReceiveSuccess(null);
+    if (
+      !Number.isInteger(quantity) ||
+      quantity <= 0
+    ) {
+      setReceiveError(
+        "Quantity received must be a positive whole number.",
+      );
+      return;
+    }
 
-      if (!selectedDrug) {
+    let buyingPrice:
+      | number
+      | undefined;
+
+    if (receiveBuyingPrice.trim()) {
+      buyingPrice = Number(
+        receiveBuyingPrice,
+      );
+
+      if (
+        !Number.isFinite(buyingPrice) ||
+        buyingPrice < 0
+      ) {
         setReceiveError(
-          "Please select a drug.",
+          "Please enter a valid buying price.",
         );
         return;
       }
+    }
 
-      const quantity =
-        Number(receiveQty);
+    try {
+      setIsReceiving(true);
 
-      if (
-        !Number.isInteger(
-          quantity,
-        ) ||
-        quantity <= 0
-      ) {
-        setReceiveError(
-          "Quantity received must be a positive whole number.",
-        );
-        return;
-      }
-
-      let buyingPrice:
-        | number
-        | undefined;
-
-      if (
-        receiveBuyingPrice.trim()
-      ) {
-        buyingPrice = Number(
-          receiveBuyingPrice,
-        );
-
-        if (
-          !Number.isFinite(
-            buyingPrice,
-          ) ||
-          buyingPrice < 0
-        ) {
-          setReceiveError(
-            "Please enter a valid buying price.",
-          );
-          return;
-        }
-      }
-
-      try {
-        setIsReceiving(true);
-
+      const result =
         await onReceiveStockSubmit(
           selectedDrug.id,
           quantity,
@@ -353,40 +247,37 @@ export const Inventory: React.FC<
           buyingPrice,
         );
 
-        setReceiveSuccess(
-          `Successfully received ${quantity} units of ${selectedDrug.name}.`,
-        );
+      setReceiveSuccess(
+        `Successfully received ${result.receiving.quantityReceived} units of ${result.drug.name}.`,
+      );
 
-        setSelectedDrug(null);
-        setReceiveSearch("");
-        setReceiveQty("");
-        setInvoiceNo("");
-        setReceiveBuyingPrice("");
-      } catch (error) {
-        console.error(
-          "Receive stock:",
-          error,
-        );
+      setSelectedDrug(null);
+      setReceiveSearch("");
+      setReceiveQty("");
+      setInvoiceNo("");
+      setReceiveBuyingPrice("");
+    } catch (error) {
+      console.error(
+        "Receive stock:",
+        error,
+      );
 
-        setReceiveError(
-          error instanceof Error
-            ? error.message
-            : "Failed to receive stock. Please try again.",
-        );
-      } finally {
-        setIsReceiving(false);
-      }
-    };
+      setReceiveError(
+        error instanceof Error
+          ? error.message
+          : "Failed to receive stock. Please try again.",
+      );
+    } finally {
+      setIsReceiving(false);
+    }
+  };
 
-  const totalInStock =
-    drugs.filter(
-      (drug) =>
-        drug.qty > 0,
-    ).length;
+  const totalInStock = drugs.filter(
+    (drug) => drug.qty > 0,
+  ).length;
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
@@ -394,9 +285,7 @@ export const Inventory: React.FC<
           </h1>
 
           <p className="text-sm text-slate-500 font-medium mt-1">
-            {drugs.length} drugs
-            {" • "}
-            {totalInStock} in
+            {drugs.length} drugs • {totalInStock} in
             stock
           </p>
         </div>
@@ -406,13 +295,10 @@ export const Inventory: React.FC<
             id="tab-drug-database"
             type="button"
             onClick={() =>
-              setActiveSubTab(
-                "database",
-              )
+              setActiveSubTab("database")
             }
             className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-              activeSubTab ===
-              "database"
+              activeSubTab === "database"
                 ? "bg-[#0D8065]/10 text-[#0D8065] font-bold shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
                 : "text-slate-600 hover:text-slate-900"
             }`}
@@ -424,13 +310,10 @@ export const Inventory: React.FC<
             id="tab-receive-stock"
             type="button"
             onClick={() =>
-              setActiveSubTab(
-                "receive",
-              )
+              setActiveSubTab("receive")
             }
             className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-              activeSubTab ===
-              "receive"
+              activeSubTab === "receive"
                 ? "bg-[#0D8065]/10 text-[#0D8065] font-bold shadow-[0_2px_8px_rgba(0,0,0,0.08)]"
                 : "text-slate-600 hover:text-slate-900"
             }`}
@@ -440,9 +323,7 @@ export const Inventory: React.FC<
         </div>
       </div>
 
-      {/* DATABASE */}
-      {activeSubTab ===
-        "database" && (
+      {activeSubTab === "database" && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden space-y-4 p-6">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="relative flex-1 max-w-md">
@@ -452,9 +333,7 @@ export const Inventory: React.FC<
                 type="text"
                 id="search-drug-input"
                 placeholder="Search drugs by name, code, generic, batch..."
-                value={
-                  searchQuery
-                }
+                value={searchQuery}
                 onChange={(e) =>
                   setSearchQuery(
                     e.target.value,
@@ -469,9 +348,7 @@ export const Inventory: React.FC<
                 <Filter className="w-4 h-4 text-slate-400" />
 
                 <select
-                  value={
-                    categoryFilter
-                  }
+                  value={categoryFilter}
                   onChange={(e) =>
                     setCategoryFilter(
                       e.target.value,
@@ -525,9 +402,7 @@ export const Inventory: React.FC<
               </div>
 
               <select
-                value={
-                  statusFilter
-                }
+                value={statusFilter}
                 onChange={(e) =>
                   setStatusFilter(
                     e.target.value,
@@ -567,9 +442,7 @@ export const Inventory: React.FC<
               <button
                 id="btn-add-drug-main"
                 type="button"
-                onClick={
-                  onAddDrug
-                }
+                onClick={onAddDrug}
                 className="px-4 py-2 text-xs font-bold text-white bg-[#0d8065] hover:bg-[#0a6d56] rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
               >
                 <Plus className="w-4 h-4 stroke-[3]" />
@@ -582,145 +455,34 @@ export const Inventory: React.FC<
             <table className="w-full text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-semibold uppercase tracking-wider">
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "code",
-                      )
-                    }
-                    className="py-2.5 px-2.5 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Code{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "code"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "name",
-                      )
-                    }
-                    className="py-2.5 pl-2.5 pr-1 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Drug Name{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "name"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "category",
-                      )
-                    }
-                    className="py-2.5 pl-1 pr-2 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Category{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "category"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "expiryDate",
-                      )
-                    }
-                    className="py-2.5 px-2 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Expiry Date{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "expiryDate"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "qty",
-                      )
-                    }
-                    className="py-2.5 px-2 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Qty{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "qty"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "sellingPrice",
-                      )
-                    }
-                    className="py-2.5 px-2 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Price{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "sellingPrice"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
-
-                  <th
-                    onClick={() =>
-                      handleSort(
-                        "status",
-                      )
-                    }
-                    className="py-2.5 px-2 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
-                  >
-                    Status{" "}
-                    <span className="text-slate-400 font-normal">
-                      {sortField ===
-                      "status"
-                        ? sortOrder ===
-                          "asc"
-                          ? "↑"
-                          : "↓"
-                        : "↕"}
-                    </span>
-                  </th>
+                  {[
+                    ["code", "Code"],
+                    ["name", "Drug Name"],
+                    ["category", "Category"],
+                    ["expiryDate", "Expiry Date"],
+                    ["qty", "Qty"],
+                    ["sellingPrice", "Price"],
+                    ["status", "Status"],
+                  ].map(([field, label]) => (
+                    <th
+                      key={field}
+                      onClick={() =>
+                        handleSort(
+                          field as keyof Drug,
+                        )
+                      }
+                      className="py-2.5 px-2.5 whitespace-nowrap cursor-pointer hover:bg-slate-100/80 transition-colors select-none"
+                    >
+                      {label}{" "}
+                      <span className="text-slate-400 font-normal">
+                        {sortField === field
+                          ? sortOrder === "asc"
+                            ? "↑"
+                            : "↓"
+                          : "↕"}
+                      </span>
+                    </th>
+                  ))}
 
                   <th className="py-2.5 px-2 text-right whitespace-nowrap">
                     Actions
@@ -729,8 +491,7 @@ export const Inventory: React.FC<
               </thead>
 
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                {sortedDrugs.length ===
-                0 ? (
+                {sortedDrugs.length === 0 ? (
                   <tr>
                     <td
                       colSpan={8}
@@ -740,143 +501,104 @@ export const Inventory: React.FC<
                     </td>
                   </tr>
                 ) : (
-                  sortedDrugs.map(
-                    (drug) => {
-                      const isExpired =
-                        drug.status ===
-                        "Expired";
+                  sortedDrugs.map((drug) => {
+                    const isExpired =
+                      drug.status === "Expired";
 
-                      return (
-                        <tr
-                          key={
-                            drug.id
-                          }
-                          className="hover:bg-slate-50/80 transition-colors"
-                        >
-                          <td className="py-2.5 px-2 text-xs font-semibold text-[#22577A] whitespace-nowrap">
-                            {drug.code}
-                          </td>
+                    return (
+                      <tr
+                        key={drug.id}
+                        className="hover:bg-slate-50/80 transition-colors"
+                      >
+                        <td className="py-2.5 px-2 text-xs font-semibold text-[#22577A] whitespace-nowrap">
+                          {drug.code}
+                        </td>
 
-                          <td className="py-2.5 pl-2 pr-1 max-w-[170px] min-w-[120px]">
-                            <div className="font-bold text-slate-900 text-xs sm:text-sm whitespace-normal leading-snug break-words">
-                              {
-                                drug.name
-                              }
-                            </div>
+                        <td className="py-2.5 pl-2 pr-1 max-w-[170px] min-w-[120px]">
+                          <div className="font-bold text-slate-900 text-xs sm:text-sm whitespace-normal leading-snug break-words">
+                            {drug.name}
+                          </div>
 
-                            <div className="text-[11px] text-slate-400 font-normal whitespace-normal leading-tight break-words">
-                              {
-                                drug.genericName
-                              }
-                            </div>
-                          </td>
+                          <div className="text-[11px] text-slate-400 font-normal whitespace-normal leading-tight break-words">
+                            {drug.genericName}
+                          </div>
+                        </td>
 
-                          <td className="py-2.5 pl-1 pr-2 text-xs text-slate-600 whitespace-nowrap">
-                            {
-                              drug.category
+                        <td className="py-2.5 pl-1 pr-2 text-xs text-slate-600 whitespace-nowrap">
+                          {drug.category}
+                        </td>
+
+                        <td className="py-2.5 px-2 text-xs font-semibold whitespace-nowrap">
+                          {isExpired ? (
+                            <span className="px-1.5 py-0.5 rounded-md text-white text-[11px] inline-block font-semibold bg-[#D71D2D]">
+                              {drug.expiryDate}
+                            </span>
+                          ) : (
+                            <span className="text-slate-600 font-medium">
+                              {drug.expiryDate}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-2.5 px-2 whitespace-nowrap">
+                          <span className="font-semibold text-xs sm:text-sm">
+                            {drug.qty}
+                          </span>
+
+                          <span className="text-xs text-slate-400 ml-1">
+                            {drug.unit}
+                          </span>
+                        </td>
+
+                        <td className="py-2.5 px-2 font-semibold text-slate-900 text-xs sm:text-sm whitespace-nowrap">
+                          {settings.currency}{" "}
+                          {Number(
+                            drug.sellingPrice,
+                          ).toFixed(2)}
+                        </td>
+
+                        <td className="py-2.5 px-2 whitespace-nowrap">
+                          {drug.status === "Expired" && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold text-white bg-[#D71D2D]">
+                              Expired
+                            </span>
+                          )}
+
+                          {drug.status === "In Stock" && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
+                              In Stock
+                            </span>
+                          )}
+
+                          {drug.status === "Low Stock" && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700">
+                              Low Stock
+                            </span>
+                          )}
+
+                          {drug.status === "Out of Stock" && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                              Out of Stock
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-2.5 px-2 text-right whitespace-nowrap">
+                          <button
+                            id={`btn-edit-drug-${drug.id}`}
+                            type="button"
+                            onClick={() =>
+                              onEditDrug(drug)
                             }
-                          </td>
-
-                          <td className="py-2.5 px-2 text-xs font-semibold whitespace-nowrap">
-                            {isExpired ? (
-                              <span
-                                className="px-1.5 py-0.5 rounded-md text-white text-[11px] inline-block font-semibold"
-                                style={{
-                                  backgroundColor:
-                                    "#D71D2D",
-                                }}
-                              >
-                                {
-                                  drug.expiryDate
-                                }
-                              </span>
-                            ) : (
-                              <span className="text-slate-600 font-medium">
-                                {
-                                  drug.expiryDate
-                                }
-                              </span>
-                            )}
-                          </td>
-
-                          <td className="py-2.5 px-2 whitespace-nowrap">
-                            <span className="font-semibold text-xs sm:text-sm">
-                              {
-                                drug.qty
-                              }
-                            </span>
-
-                            <span className="text-xs text-slate-400 ml-1">
-                              {
-                                drug.unit
-                              }
-                            </span>
-                          </td>
-
-                          <td className="py-2.5 px-2 font-semibold text-slate-900 text-xs sm:text-sm whitespace-nowrap">
-                            {settings.currency}{" "}
-                            {Number(
-                              drug.sellingPrice,
-                            ).toFixed(
-                              2,
-                            )}
-                          </td>
-
-                          <td className="py-2.5 px-2 whitespace-nowrap">
-                            {drug.status ===
-                              "Expired" && (
-                              <span
-                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold text-white"
-                                style={{
-                                  backgroundColor:
-                                    "#D71D2D",
-                                }}
-                              >
-                                Expired
-                              </span>
-                            )}
-
-                            {drug.status ===
-                              "In Stock" && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
-                                In Stock
-                              </span>
-                            )}
-
-                            {drug.status ===
-                              "Low Stock" && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700">
-                                Low Stock
-                              </span>
-                            )}
-
-                            {drug.status ===
-                              "Out of Stock" && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
-                                Out of Stock
-                              </span>
-                            )}
-                          </td>
-
-                          <td className="py-2.5 px-2 text-right whitespace-nowrap">
-                            <button
-                              id={`btn-edit-drug-${drug.id}`}
-                              type="button"
-                              onClick={() =>
-                                onEditDrug(
-                                  drug,
-                                )
-                              }
-                              className="px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-white bg-slate-100 hover:bg-[#22577A] cursor-pointer rounded-lg transition-colors flex items-center gap-1 inline-flex"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              Edit
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    },
-                  )
+                            className="px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-white bg-slate-100 hover:bg-[#22577A] cursor-pointer rounded-lg transition-colors flex items-center gap-1 inline-flex"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -884,9 +606,7 @@ export const Inventory: React.FC<
         </div>
       )}
 
-      {/* RECEIVE STOCK */}
-      {activeSubTab ===
-        "receive" && (
+      {activeSubTab === "receive" && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 max-w-2xl mx-auto space-y-6">
           <div>
             <h2 className="text-xl font-bold text-slate-900">
@@ -909,12 +629,7 @@ export const Inventory: React.FC<
           {receiveSuccess && (
             <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium rounded-xl flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-
-              <span>
-                {
-                  receiveSuccess
-                }
-              </span>
+              <span>{receiveSuccess}</span>
             </div>
           )}
 
@@ -925,18 +640,13 @@ export const Inventory: React.FC<
           )}
 
           <form
-            onSubmit={
-              handleProcessReception
-            }
+            onSubmit={handleProcessReception}
             className="space-y-5"
           >
-            {/* Drug selector */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Select Drug{" "}
-                <span className="text-red-500">
-                  *
-                </span>
+                <span className="text-red-500">*</span>
               </label>
 
               <div className="relative">
@@ -948,22 +658,13 @@ export const Inventory: React.FC<
                       ? selectedDrug.name
                       : receiveSearch
                   }
-                  disabled={
-                    isReceiving
-                  }
+                  disabled={isReceiving}
                   onChange={(e) => {
-                    setSelectedDrug(
-                      null,
-                    );
-
+                    setSelectedDrug(null);
                     setReceiveSearch(
-                      e.target
-                        .value,
+                      e.target.value,
                     );
-
-                    setReceiveError(
-                      null,
-                    );
+                    setReceiveError(null);
                   }}
                   className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden disabled:bg-slate-100"
                 />
@@ -978,9 +679,7 @@ export const Inventory: React.FC<
                           No drugs found. Use{" "}
                           <button
                             type="button"
-                            onClick={
-                              onAddDrug
-                            }
+                            onClick={onAddDrug}
                             className="text-[#22577A] font-bold underline"
                           >
                             Add Drug
@@ -989,23 +688,17 @@ export const Inventory: React.FC<
                         </div>
                       ) : (
                         receiveMatchingDrugs.map(
-                          (
-                            drug,
-                          ) => (
+                          (drug) => (
                             <button
-                              key={
-                                drug.id
-                              }
+                              key={drug.id}
                               type="button"
                               onClick={() => {
                                 setSelectedDrug(
                                   drug,
                                 );
-
                                 setReceiveSearch(
                                   "",
                                 );
-
                                 setReceiveError(
                                   null,
                                 );
@@ -1014,28 +707,17 @@ export const Inventory: React.FC<
                             >
                               <div>
                                 <span className="font-bold text-slate-900">
-                                  {
-                                    drug.name
-                                  }
+                                  {drug.name}
                                 </span>
 
                                 <span className="text-xs text-slate-400 ml-2">
-                                  (
-                                  {
-                                    drug.category
-                                  }
-                                  )
+                                  ({drug.category})
                                 </span>
                               </div>
 
                               <div className="text-xs font-semibold text-[#22577A]">
-                                {
-                                  drug.code
-                                }{" "}
-                                • Stock:{" "}
-                                {
-                                  drug.qty
-                                }
+                                {drug.code} • Stock:{" "}
+                                {drug.qty}
                               </div>
                             </button>
                           ),
@@ -1050,29 +732,17 @@ export const Inventory: React.FC<
                   <span className="text-slate-700 font-medium">
                     Selected:{" "}
                     <strong>
-                      {
-                        selectedDrug.name
-                      }
+                      {selectedDrug.name}
                     </strong>{" "}
-                    (
-                    {
-                      selectedDrug.code
-                    }
-                    ) - Current Stock:{" "}
-                    {
-                      selectedDrug.qty
-                    }
+                    ({selectedDrug.code}) - Current
+                    Stock: {selectedDrug.qty}
                   </span>
 
                   <button
                     type="button"
-                    disabled={
-                      isReceiving
-                    }
+                    disabled={isReceiving}
                     onClick={() =>
-                      setSelectedDrug(
-                        null,
-                      )
+                      setSelectedDrug(null)
                     }
                     className="text-slate-400 hover:text-slate-600 underline disabled:opacity-50"
                   >
@@ -1082,14 +752,11 @@ export const Inventory: React.FC<
               )}
             </div>
 
-            {/* Quantity and invoice */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Quantity Received{" "}
-                  <span className="text-red-500">
-                    *
-                  </span>
+                  <span className="text-red-500">*</span>
                 </label>
 
                 <input
@@ -1097,17 +764,12 @@ export const Inventory: React.FC<
                   min="1"
                   step="1"
                   required
-                  disabled={
-                    isReceiving
-                  }
+                  disabled={isReceiving}
                   placeholder="e.g. 100"
-                  value={
-                    receiveQty
-                  }
+                  value={receiveQty}
                   onChange={(e) =>
                     setReceiveQty(
-                      e.target
-                        .value,
+                      e.target.value,
                     )
                   }
                   className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden disabled:bg-slate-100"
@@ -1121,17 +783,12 @@ export const Inventory: React.FC<
 
                 <input
                   type="text"
-                  disabled={
-                    isReceiving
-                  }
+                  disabled={isReceiving}
                   placeholder="e.g. INV-2026-001"
-                  value={
-                    invoiceNo
-                  }
+                  value={invoiceNo}
                   onChange={(e) =>
                     setInvoiceNo(
-                      e.target
-                        .value,
+                      e.target.value,
                     )
                   }
                   className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden disabled:bg-slate-100"
@@ -1139,42 +796,32 @@ export const Inventory: React.FC<
               </div>
             </div>
 
-            {/* Buying price */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Buying Price (KES,
-                optional)
+                Buying Price (KES, optional)
               </label>
 
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                disabled={
-                  isReceiving
-                }
+                disabled={isReceiving}
                 placeholder="Leave blank to keep existing"
-                value={
-                  receiveBuyingPrice
-                }
+                value={receiveBuyingPrice}
                 onChange={(e) =>
                   setReceiveBuyingPrice(
-                    e.target
-                      .value,
+                    e.target.value,
                   )
                 }
                 className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-hidden disabled:bg-slate-100"
               />
             </div>
 
-            {/* Submit */}
             <div className="pt-4">
               <button
                 type="submit"
                 id="btn-process-reception"
-                disabled={
-                  isReceiving
-                }
+                disabled={isReceiving}
                 className="w-full py-3 px-6 text-sm font-bold text-white bg-[#0d8065] hover:bg-[#0a6d56] disabled:opacity-60 disabled:cursor-not-allowed rounded-xl shadow-md transition-colors flex items-center justify-center gap-2"
               >
                 <PackageCheck className="w-5 h-5" />
@@ -1187,15 +834,12 @@ export const Inventory: React.FC<
           </form>
 
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 leading-relaxed">
-            <strong>
-              Note:
-            </strong>{" "}
-            The search drug by name displays as you type from the current drug database. For a new drug, use the{" "}
+            <strong>Note:</strong> The search drug by
+            name displays as you type from the current
+            drug database. For a new drug, use the{" "}
             <button
               type="button"
-              onClick={
-                onAddDrug
-              }
+              onClick={onAddDrug}
               className="text-[#22577A] font-bold underline"
             >
               Add Drug

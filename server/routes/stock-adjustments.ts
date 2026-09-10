@@ -1,23 +1,52 @@
+
 import { Router } from "express";
 
 import { prisma } from "../prisma";
-import { authenticate } from "../middleware/auth";
 import {
-  pharmacistOnly,
-  pharmacyStaff,
-} from "../middleware/authorize";
+  authenticate,
+  requireRole,
+} from "../middleware/auth";
+import { recordAudit } from "../middleware/audit";
 
 const router = Router();
 
 router.use(authenticate);
 
+const pharmacyStaff = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+  "CLINICIAN",
+);
+
+const pharmacistOnly = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+);
+
+const adjustmentTypes = [
+  "LOSS_DAMAGE",
+  "EXPIRY_REMOVAL",
+  "AUDIT_RECONCILIATION",
+  "RETURN_TO_SUPPLIER",
+] as const;
+
 router.get(
   "/",
   pharmacyStaff,
-  async (_request, response) => {
+  async (_request, response, next) => {
     try {
       const adjustments =
         await prisma.stockAdjustment.findMany({
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+            },
+          },
           orderBy: {
             date: "desc",
           },
@@ -28,16 +57,7 @@ router.get(
         data: adjustments,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch stock adjustments:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch stock adjustments.",
-      });
+      next(error);
     }
   },
 );
@@ -45,12 +65,22 @@ router.get(
 router.get(
   "/:id",
   pharmacyStaff,
-  async (request, response) => {
+  async (request, response, next) => {
     try {
       const adjustment =
         await prisma.stockAdjustment.findUnique({
           where: {
             id: request.params.id,
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+            },
           },
         });
 
@@ -68,16 +98,7 @@ router.get(
         data: adjustment,
       });
     } catch (error) {
-      console.error(
-        "Failed to fetch stock adjustment:",
-        error,
-      );
-
-      response.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch stock adjustment.",
-      });
+      next(error);
     }
   },
 );
@@ -85,36 +106,89 @@ router.get(
 router.post(
   "/",
   pharmacistOnly,
-  async (request, response) => {
+  async (request, response, next) => {
     try {
       const {
         drugId,
         adjustedQty,
         type,
         reason,
-      } = request.body;
+      } = request.body ?? {};
 
       if (
-        !drugId ||
-        adjustedQty === undefined ||
-        !type ||
-        !reason
+        typeof drugId !== "string" ||
+        !drugId.trim()
       ) {
         response.status(400).json({
           success: false,
           message:
-            "Drug, adjusted quantity, adjustment type and reason are required.",
+            "Drug ID is required.",
         });
         return;
       }
 
       if (
-        Number(adjustedQty) < 0
+        adjustedQty === undefined ||
+        adjustedQty === null ||
+        adjustedQty === ""
       ) {
         response.status(400).json({
           success: false,
           message:
-            "Adjusted quantity cannot be negative.",
+            "Adjusted quantity is required.",
+        });
+        return;
+      }
+
+      const newQty =
+        Number(adjustedQty);
+
+      if (
+        !Number.isInteger(newQty) ||
+        newQty < 0
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Adjusted quantity must be a non-negative whole number.",
+        });
+        return;
+      }
+
+      if (
+        typeof type !== "string" ||
+        !adjustmentTypes.includes(
+          type as (typeof adjustmentTypes)[number],
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "A valid stock adjustment type is required.",
+        });
+        return;
+      }
+
+      if (
+        typeof reason !== "string" ||
+        !reason.trim()
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "A reason for the stock adjustment is required.",
+        });
+        return;
+      }
+
+      const userId =
+        request.auth?.sub;
+
+      if (!userId) {
+        response.status(401).json({
+          success: false,
+          message:
+            "Authentication required.",
         });
         return;
       }
@@ -125,7 +199,7 @@ router.post(
             const drug =
               await database.drug.findUnique({
                 where: {
-                  id: String(drugId),
+                  id: drugId.trim(),
                 },
               });
 
@@ -135,11 +209,21 @@ router.post(
               );
             }
 
+            const user =
+              await database.user.findUnique({
+                where: {
+                  id: userId,
+                },
+              });
+
+            if (!user) {
+              throw new Error(
+                "Authenticated user could not be found.",
+              );
+            }
+
             const previousQty =
               drug.qty;
-
-            const newQty =
-              Number(adjustedQty);
 
             const newStatus =
               newQty === 0
@@ -148,17 +232,15 @@ router.post(
                   ? "LOW_STOCK"
                   : "IN_STOCK";
 
-            await database.drug.update(
-              {
-                where: {
-                  id: drug.id,
-                },
-                data: {
-                  qty: newQty,
-                  status: newStatus,
-                },
+            await database.drug.update({
+              where: {
+                id: drug.id,
               },
-            );
+              data: {
+                qty: newQty,
+                status: newStatus,
+              },
+            });
 
             const adjustment =
               await database.stockAdjustment.create(
@@ -166,25 +248,28 @@ router.post(
                   data: {
                     drugId:
                       drug.id,
+
                     drugName:
                       drug.name,
+
                     batchNo:
                       drug.batchNo,
+
                     previousQty,
+
                     adjustedQty:
                       newQty,
-                    type,
+
+                    type:
+                      type as (typeof adjustmentTypes)[number],
+
                     reason:
-                      String(
-                        reason,
-                      ).trim(),
+                      reason.trim(),
+
                     adjustedBy:
-                      request.user
-                        ?.name ||
-                      "Unknown User",
-                    userId:
-                      request.user
-                        ?.id,
+                      user.name,
+
+                    userId,
                   },
                 },
               );
@@ -193,23 +278,40 @@ router.post(
           },
         );
 
+      await recordAudit(
+        request,
+        {
+          action:
+            "STOCK_ADJUSTMENT_CREATED",
+          entity:
+            "StockAdjustment",
+          entityId:
+            result.id,
+          details: {
+            drugId:
+              result.drugId,
+            drugName:
+              result.drugName,
+            batchNo:
+              result.batchNo,
+            previousQty:
+              result.previousQty,
+            adjustedQty:
+              result.adjustedQty,
+            type:
+              result.type,
+            reason:
+              result.reason,
+          },
+        },
+      );
+
       response.status(201).json({
         success: true,
         data: result,
       });
     } catch (error) {
-      console.error(
-        "Failed to create stock adjustment:",
-        error,
-      );
-
-      response.status(400).json({
-        success: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to create stock adjustment.",
-      });
+      next(error);
     }
   },
 );

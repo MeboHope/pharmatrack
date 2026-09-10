@@ -18,6 +18,8 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Users,
+  ShieldCheck,
 } from "lucide-react";
 
 import type {
@@ -31,20 +33,25 @@ import {
   type PharmacySettingsData,
 } from "../services/settings";
 
-import accountService from "../services/account";
+import { api } from "../services/api";
 
 interface SettingsProps {
   settings: PharmacySettings;
+
   onSaveSettings: (
     settings: PharmacySettings,
   ) => void;
+
   currentUser: UserAccount;
+
   users: UserAccount[];
+
   onUpdateUserPassword: (
     userId: string,
     currentPassword: string,
     newPassword: string,
   ) => Promise<void>;
+
   onOpenAuthModal: () => void;
 }
 
@@ -53,22 +60,31 @@ const toFormSettings = (
 ): PharmacySettingsData => ({
   pharmacyName:
     settings.pharmacyName || "",
+
   tagline:
     settings.tagline || "",
+
   address:
     settings.address || "",
+
   phone:
     settings.phone || "",
+
   email:
     settings.email || "",
+
   currency:
     settings.currency || "KES",
+
   clinicianName:
     settings.clinicianName || "",
+
   expiryAlertDays:
     Number(settings.expiryAlertDays) || 90,
+
   reorderAlertLevel:
     Number(settings.reorderAlertLevel) || 10,
+
   logoUrl:
     settings.logoUrl ||
     "/logo/logo.png",
@@ -80,6 +96,8 @@ export const Settings: React.FC<
   settings,
   onSaveSettings,
   currentUser,
+  users,
+  onUpdateUserPassword,
 }) => {
   const [form, setForm] =
     useState<PharmacySettingsData>(
@@ -125,9 +143,38 @@ export const Settings: React.FC<
   const [passwordSuccess, setPasswordSuccess] =
     useState("");
 
+  const [remoteUsers, setRemoteUsers] =
+    useState<UserAccount[]>(users);
+
+  const [isLoadingUsers, setIsLoadingUsers] =
+    useState(false);
+
+  const [usersError, setUsersError] =
+    useState("");
+
+  const normalizedRole =
+    String(
+      currentUser?.role ?? "",
+    )
+      .trim()
+      .toUpperCase();
+
   const canEdit =
-    currentUser.role === "Admin" ||
-    currentUser.role === "Pharmacist";
+    normalizedRole === "ADMIN" ||
+    normalizedRole === "PHARMACIST";
+
+  const isAdmin =
+    normalizedRole === "ADMIN";
+
+  useEffect(() => {
+    setForm(
+      toFormSettings(settings),
+    );
+  }, [settings]);
+
+  useEffect(() => {
+    setRemoteUsers(users);
+  }, [users]);
 
   useEffect(() => {
     let mounted = true;
@@ -174,6 +221,67 @@ export const Settings: React.FC<
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    let mounted = true;
+
+    const loadUsers =
+      async () => {
+        try {
+          setIsLoadingUsers(true);
+          setUsersError("");
+
+          const response =
+            await api.get("/users");
+
+          if (!mounted) {
+            return;
+          }
+
+          if (!response.success) {
+            throw new Error(
+              response.message ||
+                "Unable to load users.",
+            );
+          }
+
+          const data =
+            Array.isArray(
+              response.data,
+            )
+              ? response.data
+              : [];
+
+          setRemoteUsers(
+            data as UserAccount[],
+          );
+        } catch (requestError) {
+          if (!mounted) {
+            return;
+          }
+
+          setUsersError(
+            requestError instanceof Error
+              ? requestError.message
+              : "Unable to load user accounts.",
+          );
+        } finally {
+          if (mounted) {
+            setIsLoadingUsers(false);
+          }
+        }
+      };
+
+    void loadUsers();
+
+    return () => {
+      mounted = false;
+    };
+  }, [isAdmin]);
+
   const updateField = <
     K extends keyof PharmacySettingsData
   >(
@@ -217,22 +325,31 @@ export const Settings: React.FC<
         onSaveSettings({
           pharmacyName:
             normalized.pharmacyName,
+
           tagline:
             normalized.tagline,
+
           address:
             normalized.address,
+
           phone:
             normalized.phone,
+
           email:
             normalized.email,
+
           currency:
             normalized.currency,
+
           clinicianName:
             normalized.clinicianName,
+
           expiryAlertDays:
             normalized.expiryAlertDays,
+
           reorderAlertLevel:
             normalized.reorderAlertLevel,
+
           logoUrl:
             normalized.logoUrl,
         });
@@ -304,7 +421,8 @@ export const Settings: React.FC<
       try {
         setIsChangingPassword(true);
 
-        await accountService.changePassword(
+        await onUpdateUserPassword(
+          currentUser.id,
           currentPassword,
           newPassword,
         );
@@ -343,6 +461,7 @@ export const Settings: React.FC<
   return (
     <section className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-5xl space-y-6">
+
         <div>
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-[#22577A] p-2.5 text-white">
@@ -355,7 +474,7 @@ export const Settings: React.FC<
               </h1>
 
               <p className="mt-1 text-sm text-slate-500">
-                Manage pharmacy information, inventory alerts, and your account security.
+                Manage pharmacy information, inventory alerts, account security, and user access.
               </p>
             </div>
           </div>
@@ -389,6 +508,7 @@ export const Settings: React.FC<
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
+
               <div className="md:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-700">
                   Pharmacy Name
@@ -516,6 +636,7 @@ export const Settings: React.FC<
             </h2>
 
             <div className="grid gap-4 md:grid-cols-2">
+
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">
                   Expiry Alert Days
@@ -604,7 +725,8 @@ export const Settings: React.FC<
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">
-                Change the password for {currentUser.email}.
+                Change the password for{" "}
+                {currentUser.email}.
               </p>
             </div>
           </div>
@@ -679,6 +801,7 @@ export const Settings: React.FC<
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
+
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">
                   New Password
@@ -807,6 +930,168 @@ export const Settings: React.FC<
             </div>
           </form>
         </div>
+
+        {isAdmin && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-[#22577A]/10 p-2.5 text-[#22577A]">
+                  <Users className="h-5 w-5" />
+                </div>
+
+                <div>
+                  <h2 className="font-bold text-slate-900">
+                    User Management
+                  </h2>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    View the registered PharmaTrack staff accounts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600">
+                {remoteUsers.length}{" "}
+                {remoteUsers.length === 1
+                  ? "User"
+                  : "Users"}
+              </div>
+            </div>
+
+            {usersError && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{usersError}</span>
+              </div>
+            )}
+
+            {isLoadingUsers ? (
+              <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-10">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Loading user accounts...
+                </div>
+              </div>
+            ) : remoteUsers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
+                <Users className="mx-auto h-8 w-8 text-slate-400" />
+
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  No user accounts found
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  The backend returned no registered users.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <div className="grid grid-cols-[1fr_1fr_140px_120px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <span>User</span>
+                  <span>Email</span>
+                  <span>Role</span>
+                  <span>Status</span>
+                </div>
+
+                <div className="divide-y divide-slate-100">
+                  {remoteUsers.map(
+                    (user) => {
+                      const role =
+                        String(
+                          user.role,
+                        )
+                          .toUpperCase();
+
+                      const roleLabel =
+                        role === "ADMIN"
+                          ? "Admin"
+                          : role ===
+                              "PHARMACIST"
+                            ? "Pharmacist"
+                            : "Clinician";
+
+                      return (
+                        <div
+                          key={user.id}
+                          className="grid grid-cols-[1fr_1fr_140px_120px] items-center gap-4 px-4 py-4"
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#22577A]/10 text-[#22577A]">
+                              <UserRound className="h-4 w-4" />
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-slate-800">
+                                {user.name}
+                              </p>
+
+                              <p className="truncate text-[11px] text-slate-500">
+                                {user.phone ||
+                                  "No phone number"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-slate-700">
+                              {user.email}
+                            </p>
+                          </div>
+
+                          <div>
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700">
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                              {roleLabel}
+                            </span>
+                          </div>
+
+                          <div>
+                            {user.isVerified ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Verified
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                Pending
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    },
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isAdmin && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-slate-100 p-2.5 text-slate-500">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="font-bold text-slate-900">
+                  Account Access
+                </h2>
+
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  User management is restricted to administrators.
+                  Your account is currently signed in as{" "}
+                  <strong className="text-slate-700">
+                    {currentUser.role}
+                  </strong>
+                  .
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

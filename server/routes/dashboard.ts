@@ -1,16 +1,21 @@
+import { Router } from "express";
 
-import { Router, Request, Response } from "express";
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
+import { authenticate } from "../middleware/auth.js";
 
 const router = Router();
+
+router.use(authenticate);
 
 /**
  * GET /api/dashboard
  *
  * Provides the aggregated information required by
  * the PharmaTrack dashboard.
+ *
+ * Authentication is required.
  */
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/", async (_request, response, next) => {
   try {
     const [
       totalDrugs,
@@ -87,7 +92,7 @@ router.get("/", async (_req: Request, res: Response) => {
       }),
     ]);
 
-    return res.json({
+    response.json({
       success: true,
       data: {
         summary: {
@@ -99,24 +104,14 @@ router.get("/", async (_req: Request, res: Response) => {
           totalSuppliers,
           totalTransactions,
           totalSales:
-            salesAggregate._sum.totalAmount || 0,
+            salesAggregate._sum.totalAmount ?? 0,
         },
-
         recentTransactions,
-
         recentAdjustments,
       },
     });
   } catch (error) {
-    console.error(
-      "Failed to fetch dashboard data:",
-      error,
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch dashboard data",
-    });
+    next(error);
   }
 });
 

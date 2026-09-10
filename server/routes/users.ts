@@ -1,8 +1,4 @@
-// server/routes/users.ts
-
-import {
-  Router,
-} from "express";
+import { Router } from "express";
 
 import {
   authenticate,
@@ -22,6 +18,7 @@ import {
 } from "../prisma";
 
 import {
+  authService,
   hashPassword,
 } from "../services/auth";
 
@@ -51,12 +48,9 @@ const sanitizeUser = (
   email: user.email,
   phone: user.phone,
   role: user.role,
-  isVerified:
-    user.isVerified,
-  createdAt:
-    user.createdAt,
-  updatedAt:
-    user.updatedAt,
+  isVerified: user.isVerified,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
 });
 
 router.get(
@@ -100,12 +94,10 @@ router.post(
         phone,
         password,
         role,
-      } =
-        request.body ?? {};
+      } = request.body ?? {};
 
       if (
-        typeof name !==
-          "string" ||
+        typeof name !== "string" ||
         name.trim().length < 2
       ) {
         response.status(400).json({
@@ -117,11 +109,8 @@ router.post(
       }
 
       if (
-        typeof email !==
-          "string" ||
-        !email
-          .trim()
-          .includes("@")
+        typeof email !== "string" ||
+        !email.trim().includes("@")
       ) {
         response.status(400).json({
           success: false,
@@ -132,8 +121,7 @@ router.post(
       }
 
       if (
-        typeof password !==
-          "string" ||
+        typeof password !== "string" ||
         password.length < 8
       ) {
         response.status(400).json({
@@ -160,9 +148,7 @@ router.post(
       }
 
       const normalizedEmail =
-        email
-          .trim()
-          .toLowerCase();
+        email.trim().toLowerCase();
 
       const existing =
         await prisma.user.findUnique({
@@ -182,20 +168,16 @@ router.post(
       }
 
       const passwordHash =
-        await hashPassword(
-          password,
-        );
+        await hashPassword(password);
 
       const user =
         await prisma.user.create({
           data: {
-            name:
-              name.trim(),
+            name: name.trim(),
             email:
               normalizedEmail,
             phone:
-              typeof phone ===
-                "string" &&
+              typeof phone === "string" &&
               phone.trim()
                 ? phone.trim()
                 : null,
@@ -211,15 +193,11 @@ router.post(
           action:
             "USER_CREATED",
           entity: "User",
-          entityId:
-            user.id,
+          entityId: user.id,
           details: {
-            name:
-              user.name,
-            email:
-              user.email,
-            role:
-              user.role,
+            name: user.name,
+            email: user.email,
+            role: user.role,
           },
         },
       );
@@ -229,9 +207,118 @@ router.post(
         message:
           "User account created successfully.",
         data:
-          sanitizeUser(
-            user,
-          ),
+          sanitizeUser(user),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/**
+ * Admin password reset.
+ *
+ * This route must appear before /:id so
+ * the endpoint remains explicit:
+ *
+ * PUT /api/users/:id/password
+ */
+router.put(
+  "/:id/password",
+  async (
+    request: AuthenticatedRequest,
+    response,
+    next,
+  ) => {
+    try {
+      const targetUserId =
+        request.params.id;
+
+      const administratorId =
+        request.auth?.sub;
+
+      if (!administratorId) {
+        response.status(401).json({
+          success: false,
+          message:
+            "Authentication required.",
+        });
+        return;
+      }
+
+      if (
+        targetUserId ===
+        administratorId
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Use the account password-change function to change your own password.",
+        });
+        return;
+      }
+
+      const {
+        password,
+      } = request.body ?? {};
+
+      if (
+        typeof password !== "string" ||
+        password.length < 8
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Password must contain at least 8 characters.",
+        });
+        return;
+      }
+
+      const targetUser =
+        await prisma.user.findUnique({
+          where: {
+            id: targetUserId,
+          },
+        });
+
+      if (!targetUser) {
+        response.status(404).json({
+          success: false,
+          message:
+            "User account could not be found.",
+        });
+        return;
+      }
+
+      await authService.adminResetPassword(
+        targetUserId,
+        password,
+      );
+
+      await recordAudit(
+        request,
+        {
+          action:
+            "ADMIN_PASSWORD_RESET",
+          entity: "User",
+          entityId:
+            targetUserId,
+          details: {
+            message:
+              "Administrator reset the user's password.",
+            targetUserId,
+            targetEmail:
+              targetUser.email,
+            targetRole:
+              targetUser.role,
+          },
+        },
+      );
+
+      response.json({
+        success: true,
+        message:
+          "User password reset successfully.",
       });
     } catch (error) {
       next(error);
@@ -256,8 +343,7 @@ router.put(
         phone,
         role,
         isVerified,
-      } =
-        request.body ?? {};
+      } = request.body ?? {};
 
       const existing =
         await prisma.user.findUnique({
@@ -277,10 +363,9 @@ router.put(
 
       if (
         userId ===
-        request.auth?.sub &&
+          request.auth?.sub &&
         role &&
-        role !==
-          existing.role
+        role !== existing.role
       ) {
         response.status(400).json({
           success: false,
@@ -307,11 +392,8 @@ router.put(
       }
 
       const normalizedEmail =
-        typeof email ===
-          "string"
-          ? email
-              .trim()
-              .toLowerCase()
+        typeof email === "string"
+          ? email.trim().toLowerCase()
           : undefined;
 
       if (
@@ -329,8 +411,7 @@ router.put(
 
         if (
           emailOwner &&
-          emailOwner.id !==
-            userId
+          emailOwner.id !== userId
         ) {
           response.status(409).json({
             success: false,
