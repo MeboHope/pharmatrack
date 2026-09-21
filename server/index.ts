@@ -26,11 +26,24 @@ import { securityHeaders } from "./middleware/security.js";
 
 const app = express();
 
-const PORT = Number(
-  process.env.API_PORT || 4000,
-);
+const PORT = Number(process.env.API_PORT || 4000);
 
-const allowedOrigins = [
+/* ============================================================
+   CORS CONFIGURATION
+   ============================================================
+
+   Local development origins are always allowed.
+
+   Production origins are supplied through:
+     CORS_ORIGINS
+
+   Example:
+     CORS_ORIGINS=https://your-frontend.vercel.app
+
+   Multiple origins may be separated by commas.
+   ============================================================ */
+
+const localOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:3001",
@@ -40,6 +53,18 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ];
+
+const configuredOrigins = (
+  process.env.CORS_ORIGINS || ""
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  ...localOrigins,
+  ...configuredOrigins,
+]);
 
 /* ============================================================
    SECURITY HEADERS
@@ -53,18 +78,21 @@ app.use(securityHeaders);
 
 app.use(
   cors({
-    origin: (
-      origin,
-      callback,
-    ) => {
+    origin: (origin, callback) => {
+      /*
+       * Requests without an Origin header include:
+       * - server-to-server requests
+       * - health checks
+       * - some development tools
+       *
+       * These are allowed.
+       */
       if (!origin) {
         callback(null, true);
         return;
       }
 
-      if (
-        allowedOrigins.includes(origin)
-      ) {
+      if (allowedOrigins.has(origin)) {
         callback(null, true);
         return;
       }
@@ -115,55 +143,27 @@ app.get(
   (_request, response) => {
     response.json({
       success: true,
-      message:
-        "PharmaTrack API",
+      message: "PharmaTrack API",
       version: "1.0.0",
 
       endpoints: {
-        health:
-          "/api/health",
-
-        auth:
-          "/api/auth",
-
-        account:
-          "/api/account",
-
-        organizations:
-          "/api/organizations",
-
-        superAdmin:
-          "/api/super-admin",
-
-        users:
-          "/api/users",
-
-        drugs:
-          "/api/drugs",
-
-        patients:
-          "/api/patients",
-
-        suppliers:
-          "/api/suppliers",
-
-        transactions:
-          "/api/transactions",
-
+        health: "/api/health",
+        auth: "/api/auth",
+        account: "/api/account",
+        organizations: "/api/organizations",
+        superAdmin: "/api/super-admin",
+        users: "/api/users",
+        drugs: "/api/drugs",
+        patients: "/api/patients",
+        suppliers: "/api/suppliers",
+        transactions: "/api/transactions",
         stockAdjustments:
           "/api/stock-adjustments",
-
         stockReceiving:
           "/api/stock-receiving",
-
-        settings:
-          "/api/settings",
-
-        dashboard:
-          "/api/dashboard",
-
-        auditLogs:
-          "/api/audit-logs",
+        settings: "/api/settings",
+        dashboard: "/api/dashboard",
+        auditLogs: "/api/audit-logs",
       },
     });
   },
@@ -181,13 +181,9 @@ app.get(
 
       response.json({
         success: true,
-
         message:
           "PharmaTrack API is running",
-
-        database:
-          "connected",
-
+        database: "connected",
         timestamp:
           new Date().toISOString(),
       });
@@ -199,13 +195,9 @@ app.get(
 
       response.status(500).json({
         success: false,
-
         message:
           "API is running but database connection failed",
-
-        database:
-          "disconnected",
-
+        database: "disconnected",
         timestamp:
           new Date().toISOString(),
       });
@@ -248,6 +240,7 @@ app.use(
   "/api/super-admin",
   superAdminRouter,
 );
+
 app.use(
   "/api/super-admin",
   superAdminPlatformRouter,
@@ -385,192 +378,211 @@ app.use(
 );
 
 /* ============================================================
-   START SERVER
+   VERCEL / SERVERLESS EXPORT
    ============================================================ */
 
-const server = app.listen(
-  PORT,
-  () => {
-    console.log("");
+export { app };
 
-    console.log(
-      "==========================================",
-    );
-
-    console.log(
-      "       PharmaTrack API Server",
-    );
-
-    console.log(
-      "==========================================",
-    );
-
-    console.log(
-      `API:              http://localhost:${PORT}/api`,
-    );
-
-    console.log(
-      `Health:           http://localhost:${PORT}/api/health`,
-    );
-
-    console.log(
-      `Auth:             http://localhost:${PORT}/api/auth`,
-    );
-
-    console.log(
-      `Account:          http://localhost:${PORT}/api/account`,
-    );
-
-    console.log(
-      `Organizations:    http://localhost:${PORT}/api/organizations`,
-    );
-
-    console.log(
-      `Super Admin:      http://localhost:${PORT}/api/super-admin`,
-    );
-
-    console.log(
-      `Users:            http://localhost:${PORT}/api/users`,
-    );
-
-    console.log(
-      `Drugs:            http://localhost:${PORT}/api/drugs`,
-    );
-
-    console.log(
-      `Patients:         http://localhost:${PORT}/api/patients`,
-    );
-
-    console.log(
-      `Suppliers:        http://localhost:${PORT}/api/suppliers`,
-    );
-
-    console.log(
-      `Transactions:     http://localhost:${PORT}/api/transactions`,
-    );
-
-    console.log(
-      `Stock Adjustments: http://localhost:${PORT}/api/stock-adjustments`,
-    );
-
-    console.log(
-      `Stock Receiving:  http://localhost:${PORT}/api/stock-receiving`,
-    );
-
-    console.log(
-      `Settings:         http://localhost:${PORT}/api/settings`,
-    );
-
-    console.log(
-      `Dashboard:        http://localhost:${PORT}/api/dashboard`,
-    );
-
-    console.log(
-      `Audit Logs:       http://localhost:${PORT}/api/audit-logs`,
-    );
-
-    console.log(
-      "==========================================",
-    );
-
-    console.log("");
-  },
-);
+export default app;
 
 /* ============================================================
-   SERVER ERROR HANDLING
+   LOCAL SERVER
+   ============================================================
+
+   Vercel imports the Express application and handles the
+   serverless lifecycle itself.
+
+   Local development still uses the existing:
+       npm run server
+
+   command and listens on API_PORT / 4000.
    ============================================================ */
 
-server.on(
-  "error",
-  (
-    error: NodeJS.ErrnoException,
-  ) => {
-    if (
-      error.code ===
-      "EADDRINUSE"
-    ) {
-      console.error("");
+if (!process.env.VERCEL) {
+  const server = app.listen(
+    PORT,
+    () => {
+      console.log("");
 
-      console.error(
-        `ERROR: Port ${PORT} is already being used.`,
+      console.log(
+        "==========================================",
       );
 
-      console.error(
-        "Stop the existing PharmaTrack server before starting another one.",
+      console.log(
+        "       PharmaTrack API Server",
       );
 
-      console.error("");
+      console.log(
+        "==========================================",
+      );
 
-      process.exit(1);
-    }
+      console.log(
+        `API:              http://localhost:${PORT}/api`,
+      );
 
-    console.error(
-      "Server error:",
-      error,
-    );
+      console.log(
+        `Health:           http://localhost:${PORT}/api/health`,
+      );
 
-    process.exit(1);
-  },
-);
+      console.log(
+        `Auth:             http://localhost:${PORT}/api/auth`,
+      );
 
-/* ============================================================
-   GRACEFUL SHUTDOWN
-   ============================================================ */
+      console.log(
+        `Account:          http://localhost:${PORT}/api/account`,
+      );
 
-let shuttingDown = false;
+      console.log(
+        `Organizations:    http://localhost:${PORT}/api/organizations`,
+      );
 
-const shutdown = async (
-  signal: string,
-) => {
-  if (shuttingDown) {
-    return;
-  }
+      console.log(
+        `Super Admin:      http://localhost:${PORT}/api/super-admin`,
+      );
 
-  shuttingDown = true;
+      console.log(
+        `Users:             http://localhost:${PORT}/api/users`,
+      );
 
-  console.log("");
+      console.log(
+        `Drugs:             http://localhost:${PORT}/api/drugs`,
+      );
 
-  console.log(
-    `Received ${signal}. Shutting down PharmaTrack API...`,
+      console.log(
+        `Patients:          http://localhost:${PORT}/api/patients`,
+      );
+
+      console.log(
+        `Suppliers:         http://localhost:${PORT}/api/suppliers`,
+      );
+
+      console.log(
+        `Transactions:      http://localhost:${PORT}/api/transactions`,
+      );
+
+      console.log(
+        `Stock Adjustments: http://localhost:${PORT}/api/stock-adjustments`,
+      );
+
+      console.log(
+        `Stock Receiving:   http://localhost:${PORT}/api/stock-receiving`,
+      );
+
+      console.log(
+        `Settings:          http://localhost:${PORT}/api/settings`,
+      );
+
+      console.log(
+        `Dashboard:         http://localhost:${PORT}/api/dashboard`,
+      );
+
+      console.log(
+        `Audit Logs:        http://localhost:${PORT}/api/audit-logs`,
+      );
+
+      console.log(
+        "==========================================",
+      );
+
+      console.log("");
+    },
   );
 
-  server.close(
-    async () => {
-      try {
-        await prisma.$disconnect();
+  /* ============================================================
+     LOCAL SERVER ERROR HANDLING
+     ============================================================ */
 
-        console.log(
-          "Database connection closed.",
-        );
+  server.on(
+    "error",
+    (
+      error: NodeJS.ErrnoException,
+    ) => {
+      if (
+        error.code ===
+        "EADDRINUSE"
+      ) {
+        console.error("");
 
-        console.log(
-          "PharmaTrack API stopped.",
-        );
-
-        process.exit(0);
-      } catch (error) {
         console.error(
-          "Error while disconnecting Prisma:",
-          error,
+          `ERROR: Port ${PORT} is already being used.`,
         );
+
+        console.error(
+          "Stop the existing PharmaTrack server before starting another one.",
+        );
+
+        console.error("");
 
         process.exit(1);
       }
+
+      console.error(
+        "Server error:",
+        error,
+      );
+
+      process.exit(1);
     },
   );
-};
 
-process.on(
-  "SIGINT",
-  () => {
-    void shutdown("SIGINT");
-  },
-);
+  /* ============================================================
+     GRACEFUL LOCAL SHUTDOWN
+     ============================================================ */
 
-process.on(
-  "SIGTERM",
-  () => {
-    void shutdown("SIGTERM");
-  },
-);
+  let shuttingDown = false;
+
+  const shutdown = async (
+    signal: string,
+  ) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
+
+    console.log("");
+
+    console.log(
+      `Received ${signal}. Shutting down PharmaTrack API...`,
+    );
+
+    server.close(
+      async () => {
+        try {
+          await prisma.$disconnect();
+
+          console.log(
+            "Database connection closed.",
+          );
+
+          console.log(
+            "PharmaTrack API stopped.",
+          );
+
+          process.exit(0);
+        } catch (error) {
+          console.error(
+            "Error while disconnecting Prisma:",
+            error,
+          );
+
+          process.exit(1);
+        }
+      },
+    );
+  };
+
+  process.on(
+    "SIGINT",
+    () => {
+      void shutdown("SIGINT");
+    },
+  );
+
+  process.on(
+    "SIGTERM",
+    () => {
+      void shutdown("SIGTERM");
+    },
+  );
+}

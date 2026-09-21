@@ -10,7 +10,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "server": "tsx server/index.ts",
-    "create-admin": "tsx server/scripts/create-admin.ts"
+    "create-admin": "tsx server/scripts/create-admin.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
