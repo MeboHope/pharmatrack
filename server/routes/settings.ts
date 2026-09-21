@@ -109,7 +109,11 @@ router.get(
               reorderAlertLevel: 10,
               logoUrl:
                 "/logo/logo.png",
-              organizationId,
+              organization: {
+                connect: {
+                  id: organizationId,
+                },
+              },
             },
           });
       }
@@ -261,7 +265,11 @@ router.put(
         : await prisma.pharmacySettings.create({
             data: {
               ...data,
-              organizationId,
+              organization: {
+                connect: {
+                  id: organizationId,
+                },
+              },
             },
           });
 
