@@ -103,7 +103,7 @@ router.get("/", async (request, response, next) => {
         },
         include: {
           PrescriptionItem: true,
-          patient: true,
+          Patient: true,
         },
       }),
 
