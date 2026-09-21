@@ -66,9 +66,7 @@ export default function App() {
   ]);
 
   const [activeTab, setActiveTab] =
-    useState<TabType>(
-      "dashboard",
-    );
+    useState<TabType>("dashboard");
 
   const {
     currentUser,
@@ -80,16 +78,16 @@ export default function App() {
     switchOrganization,
   } = useAuth();
 
-  const [isAuthModalOpen, setIsAuthModalOpen] =
-    useState(false);
+  const [
+    isAuthModalOpen,
+    setIsAuthModalOpen,
+  ] = useState(false);
 
   const [
     authModalInitialMode,
     setAuthModalInitialMode,
   ] = useState<
-    "login" |
-    "signup" |
-    "forgot"
+    "login" | "signup" | "forgot"
   >("login");
 
   const [
@@ -105,10 +103,12 @@ export default function App() {
   const [drugs, setDrugs] =
     useState<Drug[]>(initialDrugs);
 
-  const [transactions, setTransactions] =
-    useState<DispenseTransaction[]>(
-      initialTransactions,
-    );
+  const [
+    transactions,
+    setTransactions,
+  ] = useState<DispenseTransaction[]>(
+    initialTransactions,
+  );
 
   const [patients, setPatients] =
     useState<PatientRecord[]>(
@@ -120,22 +120,30 @@ export default function App() {
       initialSuppliers,
     );
 
-  const [adjustments, setAdjustments] =
-    useState<StockAdjustment[]>(
-      initialAdjustments,
-    );
+  const [
+    adjustments,
+    setAdjustments,
+  ] = useState<StockAdjustment[]>(
+    initialAdjustments,
+  );
 
-  const [dataLoading, setDataLoading] =
-    useState(false);
+  const [
+    dataLoading,
+    setDataLoading,
+  ] = useState(false);
 
   const [dataError, setDataError] =
     useState("");
 
-  const [isAddDrugOpen, setIsAddDrugOpen] =
-    useState(false);
+  const [
+    isAddDrugOpen,
+    setIsAddDrugOpen,
+  ] = useState(false);
 
-  const [editingDrug, setEditingDrug] =
-    useState<Drug | null>(null);
+  const [
+    editingDrug,
+    setEditingDrug,
+  ] = useState<Drug | null>(null);
 
   /*
    * Super Admin is a platform-level account.
@@ -149,8 +157,7 @@ export default function App() {
     "Super Admin";
 
   const isAdmin =
-    currentUser?.role ===
-    "Admin";
+    currentUser?.role === "Admin";
 
   /*
    * The organization ID is deliberately taken
@@ -160,8 +167,7 @@ export default function App() {
    * to scope all tenant-owned records.
    */
   const currentOrganizationId =
-    currentUser?.organizationId ??
-    null;
+    currentUser?.organizationId ?? null;
 
   /*
    * Read access.
@@ -170,59 +176,45 @@ export default function App() {
    * stock-adjustment history.
    */
   const canViewInventory =
-    currentUser?.role ===
-      "Admin" ||
-    currentUser?.role ===
-      "Pharmacist" ||
-    currentUser?.role ===
-      "Clinician";
+    currentUser?.role === "Admin" ||
+    currentUser?.role === "Pharmacist" ||
+    currentUser?.role === "Clinician";
 
   const canViewStockAdjustments =
-    currentUser?.role ===
-      "Admin" ||
-    currentUser?.role ===
-      "Pharmacist" ||
-    currentUser?.role ===
-      "Clinician";
+    currentUser?.role === "Admin" ||
+    currentUser?.role === "Pharmacist" ||
+    currentUser?.role === "Clinician";
 
   /*
    * Write/management access.
    */
   const isPharmacyStaff =
-    currentUser?.role ===
-      "Admin" ||
-    currentUser?.role ===
-      "Pharmacist";
+    currentUser?.role === "Admin" ||
+    currentUser?.role === "Pharmacist";
 
   /*
-   * Clear all organization-scoped application
-   * state.
+   * Clear all organization-scoped
+   * application state.
    *
    * This is important for multi-tenancy:
    * records belonging to Organization A must
    * never remain visible while Organization B
    * is being loaded.
    */
-  const clearTenantData =
-    () => {
-      setDrugs([]);
-      setPatients([]);
-      setTransactions([]);
-      setSuppliers([]);
-      setAdjustments([]);
-      setSettings(initialSettings);
-      setDataError("");
-      setIsAddDrugOpen(false);
-      setEditingDrug(null);
-    };
+  const clearTenantData = () => {
+    setDrugs([]);
+    setPatients([]);
+    setTransactions([]);
+    setSuppliers([]);
+    setAdjustments([]);
+    setSettings(initialSettings);
+    setDataError("");
+    setIsAddDrugOpen(false);
+    setEditingDrug(null);
+  };
 
   /*
    * Load operational data from the backend.
-   *
-   * The effect depends explicitly on the
-   * organization ID. Therefore, changing
-   * organizations automatically causes the
-   * application to reload its tenant data.
    *
    * Super Admins never load these endpoints.
    */
@@ -273,13 +265,6 @@ export default function App() {
         setDataError("");
 
         try {
-          /*
-           * Drugs are loaded for clinicians
-           * as well as pharmacy staff.
-           *
-           * Every request is authenticated and
-           * organization-scoped by the backend.
-           */
           const [
             drugsResponse,
             patientsResponse,
@@ -287,27 +272,23 @@ export default function App() {
             settingsResponse,
           ] = await Promise.all([
             canViewInventory
-              ? api.get<Drug[]>(
-                  "/drugs",
-                )
+              ? api.get<Drug[]>("/drugs")
               : Promise.resolve({
                   success: true,
                   data: [],
-                } as ApiResponse<
-                  Drug[]
-                >),
+                } as ApiResponse<Drug[]>),
 
-            api.get<
-              PatientRecord[]
-            >("/patients"),
+            api.get<PatientRecord[]>(
+              "/patients",
+            ),
 
-            api.get<
-              DispenseTransaction[]
-            >("/transactions"),
+            api.get<DispenseTransaction[]>(
+              "/transactions",
+            ),
 
-            api.get<
-              PharmacySettings
-            >("/settings"),
+            api.get<PharmacySettings>(
+              "/settings",
+            ),
           ]);
 
           if (cancelled) {
@@ -315,32 +296,22 @@ export default function App() {
           }
 
           setDrugs(
-            unwrap(
-              drugsResponse,
-            ) || [],
+            unwrap(drugsResponse) || [],
           );
 
           setPatients(
-            unwrap(
-              patientsResponse,
-            ) || [],
+            unwrap(patientsResponse) || [],
           );
 
           setTransactions(
-            unwrap(
-              transactionsResponse,
-            ) || [],
+            unwrap(transactionsResponse) || [],
           );
 
           const loadedSettings =
-            unwrap(
-              settingsResponse,
-            );
+            unwrap(settingsResponse);
 
           if (loadedSettings) {
-            setSettings(
-              loadedSettings,
-            );
+            setSettings(loadedSettings);
           }
 
           /*
@@ -351,33 +322,26 @@ export default function App() {
             const [
               suppliersResponse,
               adjustmentsResponse,
-            ] =
-              await Promise.all([
-                api.get<Supplier[]>(
-                  "/suppliers",
-                ),
+            ] = await Promise.all([
+              api.get<Supplier[]>(
+                "/suppliers",
+              ),
 
-                api.get<
-                  StockAdjustment[]
-                >(
-                  "/stock-adjustments",
-                ),
-              ]);
+              api.get<StockAdjustment[]>(
+                "/stock-adjustments",
+              ),
+            ]);
 
             if (cancelled) {
               return;
             }
 
             setSuppliers(
-              unwrap(
-                suppliersResponse,
-              ) || [],
+              unwrap(suppliersResponse) || [],
             );
 
             setAdjustments(
-              unwrap(
-                adjustmentsResponse,
-              ) || [],
+              unwrap(adjustmentsResponse) || [],
             );
           } else {
             /*
@@ -440,10 +404,6 @@ export default function App() {
 
   /*
    * Switch organization.
-   *
-   * We clear tenant state immediately so the
-   * previous organization's records disappear
-   * before the new organization is loaded.
    */
   const handleSwitchOrganization =
     async (
@@ -453,22 +413,16 @@ export default function App() {
         organizationId ===
         currentOrganizationId
       ) {
-        return (
-          currentUser as UserAccount
-        );
+        return currentUser as UserAccount;
       }
 
       clearTenantData();
 
       /*
        * Always return to the dashboard when
-       * changing organizations. This avoids
-       * carrying a page-specific state from
-       * one tenant into another.
+       * changing organizations.
        */
-      setActiveTab(
-        "dashboard",
-      );
+      setActiveTab("dashboard");
 
       try {
         const user =
@@ -494,8 +448,7 @@ export default function App() {
    * Global print shortcut.
    *
    * This is only relevant to the normal
-   * pharmacy application. Super Admin does
-   * not use the dispensing workspace.
+   * pharmacy application.
    */
   useEffect(() => {
     const handlePrintShortcut = (
@@ -504,19 +457,15 @@ export default function App() {
       if (
         (event.ctrlKey ||
           event.metaKey) &&
-        event.key.toLowerCase() ===
-          "p"
+        event.key.toLowerCase() === "p"
       ) {
         event.preventDefault();
 
         if (
           !isSuperAdmin &&
-          activeTab !==
-            "dispensing"
+          activeTab !== "dispensing"
         ) {
-          setActiveTab(
-            "dispensing",
-          );
+          setActiveTab("dispensing");
         }
       }
     };
@@ -537,15 +486,14 @@ export default function App() {
     isSuperAdmin,
   ]);
 
-  const handleOpenAddDrug =
-    () => {
-      if (!isPharmacyStaff) {
-        return;
-      }
+  const handleOpenAddDrug = () => {
+    if (!isPharmacyStaff) {
+      return;
+    }
 
-      setEditingDrug(null);
-      setIsAddDrugOpen(true);
-    };
+    setEditingDrug(null);
+    setIsAddDrugOpen(true);
+  };
 
   const handleOpenEditDrug = (
     drug: Drug,
@@ -561,79 +509,73 @@ export default function App() {
   /*
    * Create or update drug.
    */
-  const handleSaveDrug =
-    async (
-      drugData: Partial<Drug>,
-    ) => {
-      if (!isPharmacyStaff) {
-        setDataError(
-          "You do not have permission to modify inventory.",
-        );
-        return;
-      }
+  const handleSaveDrug = async (
+    drugData: Partial<Drug>,
+  ) => {
+    if (!isPharmacyStaff) {
+      setDataError(
+        "You do not have permission to modify inventory.",
+      );
+      return;
+    }
 
-      try {
-        if (editingDrug) {
-          const response =
-            await api.put<Drug>(
-              `/drugs/${editingDrug.id}`,
-              drugData,
-            );
-
-          const updated =
-            unwrap(response);
-
-          if (!updated) {
-            throw new Error(
-              "The server did not return the updated drug.",
-            );
-          }
-
-          setDrugs(
-            (previous) =>
-              previous.map(
-                (drug) =>
-                  drug.id ===
-                  editingDrug.id
-                    ? updated
-                    : drug,
-              ),
+    try {
+      if (editingDrug) {
+        const response =
+          await api.put<Drug>(
+            `/drugs/${editingDrug.id}`,
+            drugData,
           );
-        } else {
-          const response =
-            await api.post<Drug>(
-              "/drugs",
-              drugData,
-            );
 
-          const created =
-            unwrap(response);
+        const updated =
+          unwrap(response);
 
-          if (!created) {
-            throw new Error(
-              "The server did not return the created drug.",
-            );
-          }
-
-          setDrugs(
-            (previous) => [
-              created,
-              ...previous,
-            ],
+        if (!updated) {
+          throw new Error(
+            "The server did not return the updated drug.",
           );
         }
 
-        setIsAddDrugOpen(false);
-        setEditingDrug(null);
-        setDataError("");
-      } catch (error) {
-        setDataError(
-          error instanceof Error
-            ? error.message
-            : "Unable to save drug.",
+        setDrugs((previous) =>
+          previous.map((drug) =>
+            drug.id === editingDrug.id
+              ? updated
+              : drug,
+          ),
         );
+      } else {
+        const response =
+          await api.post<Drug>(
+            "/drugs",
+            drugData,
+          );
+
+        const created =
+          unwrap(response);
+
+        if (!created) {
+          throw new Error(
+            "The server did not return the created drug.",
+          );
+        }
+
+        setDrugs((previous) => [
+          created,
+          ...previous,
+        ]);
       }
-    };
+
+      setIsAddDrugOpen(false);
+      setEditingDrug(null);
+      setDataError("");
+    } catch (error) {
+      setDataError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save drug.",
+      );
+    }
+  };
 
   /*
    * Receive stock.
@@ -657,9 +599,7 @@ export default function App() {
 
         setDataError(error);
 
-        throw new Error(
-          error,
-        );
+        throw new Error(error);
       }
 
       try {
@@ -689,15 +629,12 @@ export default function App() {
           );
         }
 
-        setDrugs(
-          (previous) =>
-            previous.map(
-              (drug) =>
-                drug.id ===
-                drugId
-                  ? result.drug
-                  : drug,
-            ),
+        setDrugs((previous) =>
+          previous.map((drug) =>
+            drug.id === drugId
+              ? result.drug
+              : drug,
+          ),
         );
 
         return result;
@@ -709,9 +646,7 @@ export default function App() {
 
         setDataError(message);
 
-        throw new Error(
-          message,
-        );
+        throw new Error(message);
       }
     };
 
@@ -723,10 +658,8 @@ export default function App() {
       newTransaction: DispenseTransaction,
     ) => {
       /*
-       * Clinicians may have access to the
-       * dispensing workspace for clinical
-       * visibility, but transaction creation
-       * is a pharmacy-staff operation.
+       * Transaction creation remains a
+       * pharmacy-staff operation.
        */
       if (!isPharmacyStaff) {
         setDataError(
@@ -751,49 +684,35 @@ export default function App() {
           );
         }
 
-        setTransactions(
-          (previous) => [
-            created,
-            ...previous,
-          ],
-        );
+        setTransactions((previous) => [
+          created,
+          ...previous,
+        ]);
 
         const [
           drugsResponse,
           patientsResponse,
         ] = await Promise.all([
           canViewInventory
-            ? api.get<Drug[]>(
-                "/drugs",
-              )
+            ? api.get<Drug[]>("/drugs")
             : Promise.resolve({
                 success: true,
                 data: [],
-              } as ApiResponse<
-                Drug[]
-              >),
+              } as ApiResponse<Drug[]>),
 
-          api.get<
-            PatientRecord[]
-          >("/patients"),
+          api.get<PatientRecord[]>(
+            "/patients",
+          ),
         ]);
 
-        /*
-         * Refresh drugs for clinicians too,
-         * because they have read access.
-         */
         if (canViewInventory) {
           setDrugs(
-            unwrap(
-              drugsResponse,
-            ) || [],
+            unwrap(drugsResponse) || [],
           );
         }
 
         setPatients(
-          unwrap(
-            patientsResponse,
-          ) || [],
+          unwrap(patientsResponse) || [],
         );
 
         setDataError("");
@@ -836,12 +755,10 @@ export default function App() {
           );
         }
 
-        setSuppliers(
-          (previous) => [
-            ...previous,
-            created,
-          ],
-        );
+        setSuppliers((previous) => [
+          ...previous,
+          created,
+        ]);
 
         setDataError("");
       } catch (error) {
@@ -880,15 +797,12 @@ export default function App() {
           );
         }
 
-        setSuppliers(
-          (previous) =>
-            previous.map(
-              (item) =>
-                item.id ===
-                supplier.id
-                  ? updated
-                  : item,
-            ),
+        setSuppliers((previous) =>
+          previous.map((item) =>
+            item.id === supplier.id
+              ? updated
+              : item,
+          ),
         );
 
         setDataError("");
@@ -924,12 +838,10 @@ export default function App() {
           );
         }
 
-        setPatients(
-          (previous) => [
-            ...previous,
-            created,
-          ],
-        );
+        setPatients((previous) => [
+          ...previous,
+          created,
+        ]);
 
         setDataError("");
       } catch (error) {
@@ -961,15 +873,12 @@ export default function App() {
           );
         }
 
-        setPatients(
-          (previous) =>
-            previous.map(
-              (item) =>
-                item.id ===
-                patient.id
-                  ? updated
-                  : item,
-            ),
+        setPatients((previous) =>
+          previous.map((item) =>
+            item.id === patient.id
+              ? updated
+              : item,
+          ),
         );
 
         setDataError("");
@@ -1012,26 +921,16 @@ export default function App() {
           );
         }
 
-        setAdjustments(
-          (previous) => [
-            created,
-            ...previous,
-          ],
-        );
+        setAdjustments((previous) => [
+          created,
+          ...previous,
+        ]);
 
-        /*
-         * Refresh inventory after the
-         * stock quantity changes.
-         */
         const drugsResponse =
-          await api.get<Drug[]>(
-            "/drugs",
-          );
+          await api.get<Drug[]>("/drugs");
 
         setDrugs(
-          unwrap(
-            drugsResponse,
-          ) || [],
+          unwrap(drugsResponse) || [],
         );
 
         setDataError("");
@@ -1093,10 +992,7 @@ export default function App() {
         );
       }
 
-      if (
-        userId !==
-        currentUser.id
-      ) {
+      if (userId !== currentUser.id) {
         throw new Error(
           "You can only change your own password here.",
         );
@@ -1116,27 +1012,19 @@ export default function App() {
    */
   const handleLoginSuccess =
     (user: UserAccount) => {
-      syncAuthenticatedUser(
-        user,
-      );
+      syncAuthenticatedUser(user);
 
       setDataError("");
-      setActiveTab(
-        "dashboard",
-      );
+      setActiveTab("dashboard");
       setIsAuthModalOpen(false);
     };
 
   const handleSignUpSuccess =
     (user: UserAccount) => {
-      syncAuthenticatedUser(
-        user,
-      );
+      syncAuthenticatedUser(user);
 
       setDataError("");
-      setActiveTab(
-        "dashboard",
-      );
+      setActiveTab("dashboard");
       setIsAuthModalOpen(false);
     };
 
@@ -1144,43 +1032,30 @@ export default function App() {
     async () => {
       await logout();
 
-      setIsLogoutModalOpen(
-        false,
-      );
-
-      setActiveTab(
-        "dashboard",
-      );
+      setIsLogoutModalOpen(false);
+      setActiveTab("dashboard");
 
       clearTenantData();
     };
 
-  const handleOpenLogin =
-    () => {
-      setAuthModalInitialMode(
-        "login",
-      );
+  const handleOpenLogin = () => {
+    setAuthModalInitialMode("login");
+    setIsAuthModalOpen(true);
+  };
 
-      setIsAuthModalOpen(true);
-    };
-
-  const handleOpenSignup =
-    () => {
-      setAuthModalInitialMode(
-        "signup",
-      );
-
-      setIsAuthModalOpen(true);
-    };
+  const handleOpenSignup = () => {
+    setAuthModalInitialMode("signup");
+    setIsAuthModalOpen(true);
+  };
 
   /*
    * Authentication loading screen.
    */
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <div className="flex min-h-screen items-center justify-center bg-slate-100">
         <div className="text-center">
-          <div className="w-10 h-10 border-4 border-slate-300 border-t-[#22577A] rounded-full animate-spin mx-auto mb-4" />
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-[#22577A]" />
 
           <p className="text-sm font-semibold text-slate-700">
             Loading PharmaTrack...
@@ -1192,18 +1067,13 @@ export default function App() {
 
   /*
    * Public feature routes.
-   *
-   * These routes are intentionally available
-   * without authentication because they are
-   * part of the public PharmaTrack website.
    */
   if (publicRoute) {
     return publicRoute;
   }
 
   /*
-   * Landing page for unauthenticated
-   * users.
+   * Landing page for unauthenticated users.
    */
   if (!currentUser) {
     return (
@@ -1242,21 +1112,45 @@ export default function App() {
   }
 
   /*
-   * Authenticated application.
+   * SUPER ADMIN APPLICATION
+   *
+   * IMPORTANT:
+   * Super Admin receives its own complete
+   * application shell from SuperAdminDashboard.
+   *
+   * The normal Sidebar is deliberately NOT
+   * rendered here.
+   *
+   * This prevents the normal tenant sidebar
+   * from appearing underneath/behind the
+   * Super Admin sidebar.
+   */
+  if (isSuperAdmin) {
+    return (
+      <SuperAdminDashboard
+        currentUser={currentUser}
+        userName={currentUser.name}
+        onLogout={logout}
+      />
+    );
+  }
+
+  /*
+   * NORMAL TENANT APPLICATION
+   *
+   * ADMIN / PHARMACIST / CLINICIAN users
+   * continue using the normal pharmacy/clinic
+   * application shell.
    */
   return (
     <div className="flex min-h-screen bg-slate-100 font-sans antialiased text-slate-800">
       <Sidebar
-        activeTab={
-          activeTab
-        }
+        activeTab={activeTab}
         setActiveTab={
           setActiveTab
         }
         settings={settings}
-        currentUser={
-          currentUser
-        }
+        currentUser={currentUser}
         organizations={
           organizations
         }
@@ -1276,259 +1170,237 @@ export default function App() {
         }
       />
 
-      <main className="flex-1 overflow-y-auto">
-        {/*
-         * Super Admin has a completely separate
-         * platform administration interface.
-         *
-         * It intentionally does not render the
-         * normal pharmacy modules.
-         */}
-        {isSuperAdmin ? (
-          <SuperAdminDashboard
-            userName={
-              currentUser.name
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        {dataError && (
+          <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+            {dataError}
+
+            <button
+              type="button"
+              onClick={() =>
+                setDataError("")
+              }
+              className="ml-3 font-bold underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {dataLoading && (
+          <div className="m-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+            Loading pharmacy data...
+          </div>
+        )}
+
+        {activeTab ===
+          "dashboard" && (
+          <Dashboard
+            drugs={drugs}
+            transactions={
+              transactions
+            }
+            settings={settings}
+            setActiveTab={
+              setActiveTab
+            }
+            onQuickDispense={() =>
+              setActiveTab(
+                "dispensing",
+              )
+            }
+            onReceiveStock={() => {
+              if (
+                isPharmacyStaff
+              ) {
+                setActiveTab(
+                  "inventory",
+                );
+              }
+            }}
+            onRecordAdjustment={() => {
+              if (
+                isPharmacyStaff
+              ) {
+                setActiveTab(
+                  "stock-adjustments",
+                );
+              }
+            }}
+          />
+        )}
+
+        {activeTab ===
+          "inventory" &&
+          canViewInventory && (
+            <Inventory
+              drugs={drugs}
+              settings={settings}
+              readOnly={
+                !isPharmacyStaff
+              }
+              onAddDrug={
+                handleOpenAddDrug
+              }
+              onEditDrug={
+                handleOpenEditDrug
+              }
+              onReceiveStockSubmit={
+                handleReceiveStockSubmit
+              }
+            />
+          )}
+
+        {activeTab ===
+          "dispensing" && (
+          <Dispensing
+            drugs={drugs}
+            settings={settings}
+            transactions={
+              transactions
+            }
+            patients={patients}
+            onCompleteTransaction={
+              handleCompleteTransaction
             }
           />
-        ) : (
-          <>
-            {dataError && (
-              <div className="m-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-xl">
-                {dataError}
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDataError("")
-                  }
-                  className="ml-3 font-bold underline"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            {dataLoading && (
-              <div className="m-4 p-3 bg-sky-50 border border-sky-200 text-sky-800 text-sm rounded-xl">
-                Loading pharmacy data...
-              </div>
-            )}
-
-            {activeTab ===
-              "dashboard" && (
-              <Dashboard
-                drugs={drugs}
-                transactions={
-                  transactions
-                }
-                settings={settings}
-                setActiveTab={
-                  setActiveTab
-                }
-                onQuickDispense={() =>
-                  setActiveTab(
-                    "dispensing",
-                  )
-                }
-                onReceiveStock={() => {
-                  if (
-                    isPharmacyStaff
-                  ) {
-                    setActiveTab(
-                      "inventory",
-                    );
-                  }
-                }}
-                onRecordAdjustment={() => {
-                  if (
-                    isPharmacyStaff
-                  ) {
-                    setActiveTab(
-                      "stock-adjustments",
-                    );
-                  }
-                }}
-              />
-            )}
-
-            {activeTab ===
-              "inventory" &&
-              canViewInventory && (
-                <Inventory
-                  drugs={drugs}
-                  settings={settings}
-                  readOnly={
-                    !isPharmacyStaff
-                  }
-                  onAddDrug={
-                    handleOpenAddDrug
-                  }
-                  onEditDrug={
-                    handleOpenEditDrug
-                  }
-                  onReceiveStockSubmit={
-                    handleReceiveStockSubmit
-                  }
-                />
-              )}
-
-            {activeTab ===
-              "dispensing" && (
-              <Dispensing
-                drugs={drugs}
-                settings={settings}
-                transactions={
-                  transactions
-                }
-                patients={patients}
-                onCompleteTransaction={
-                  handleCompleteTransaction
-                }
-              />
-            )}
-
-            {activeTab ===
-              "suppliers" &&
-              isPharmacyStaff && (
-                <Suppliers
-                  suppliers={
-                    suppliers
-                  }
-                  currentUser={
-                    currentUser
-                  }
-                  onAddSupplier={
-                    handleAddSupplier
-                  }
-                  onUpdateSupplier={
-                    handleEditSupplier
-                  }
-                />
-              )}
-
-            {activeTab ===
-              "patients" && (
-              <Patients
-                patients={
-                  patients
-                }
-                onAddPatient={
-                  handleAddPatient
-                }
-                onUpdatePatient={
-                  handleEditPatient
-                }
-              />
-            )}
-
-            {activeTab ===
-              "reports" && (
-              <Reports
-                drugs={drugs}
-                transactions={
-                  transactions
-                }
-                settings={
-                  settings
-                }
-              />
-            )}
-
-            {activeTab ===
-              "stock-adjustments" &&
-              canViewStockAdjustments && (
-                <StockAdjustments
-                  drugs={drugs}
-                  adjustments={
-                    adjustments
-                  }
-                  settings={
-                    settings
-                  }
-                  readOnly={
-                    !isPharmacyStaff
-                  }
-                  onAddAdjustment={
-                    isPharmacyStaff
-                      ? handleAddAdjustment
-                      : undefined
-                  }
-                />
-              )}
-
-            {activeTab ===
-              "user-management" &&
-              isAdmin && (
-                <UserManagement
-                  currentUserId={
-                    currentUser.id
-                  }
-                />
-              )}
-
-            {activeTab ===
-              "audit-logs" &&
-              isAdmin && (
-                <AuditLogs
-                  currentUser={
-                    currentUser
-                  }
-                />
-              )}
-
-            {activeTab ===
-              "settings" && (
-              <Settings
-                settings={
-                  settings
-                }
-                onSaveSettings={
-                  handleSaveSettings
-                }
-                currentUser={
-                  currentUser
-                }
-                users={[]}
-                onUpdateUserPassword={
-                  handleUpdateUserPassword
-                }
-                onOpenAuthModal={
-                  handleOpenLogin
-                }
-              />
-            )}
-          </>
         )}
-      </main>
 
-      {!isSuperAdmin &&
-        isPharmacyStaff && (
-          <AddDrugModal
-            isOpen={
-              isAddDrugOpen
+        {activeTab ===
+          "suppliers" &&
+          isPharmacyStaff && (
+            <Suppliers
+              suppliers={
+                suppliers
+              }
+              currentUser={
+                currentUser
+              }
+              onAddSupplier={
+                handleAddSupplier
+              }
+              onUpdateSupplier={
+                handleEditSupplier
+              }
+            />
+          )}
+
+        {activeTab ===
+          "patients" && (
+          <Patients
+            patients={patients}
+            onAddPatient={
+              handleAddPatient
             }
-            onClose={() => {
-              setIsAddDrugOpen(
-                false,
-              );
-              setEditingDrug(
-                null,
-              );
-            }}
-            onSave={
-              handleSaveDrug
+            onUpdatePatient={
+              handleEditPatient
             }
-            editingDrug={
-              editingDrug
+          />
+        )}
+
+        {activeTab ===
+          "reports" && (
+          <Reports
+            drugs={drugs}
+            transactions={
+              transactions
             }
             settings={
               settings
             }
-            nextCodeNumber={
-              drugs.length + 1
+          />
+        )}
+
+        {activeTab ===
+          "stock-adjustments" &&
+          canViewStockAdjustments && (
+            <StockAdjustments
+              drugs={drugs}
+              adjustments={
+                adjustments
+              }
+              settings={
+                settings
+              }
+              readOnly={
+                !isPharmacyStaff
+              }
+              onAddAdjustment={
+                isPharmacyStaff
+                  ? handleAddAdjustment
+                  : undefined
+              }
+            />
+          )}
+
+        {activeTab ===
+          "user-management" &&
+          isAdmin && (
+            <UserManagement
+              currentUserId={
+                currentUser.id
+              }
+            />
+          )}
+
+        {activeTab ===
+          "audit-logs" &&
+          isAdmin && (
+            <AuditLogs
+              currentUser={
+                currentUser
+              }
+            />
+          )}
+
+        {activeTab ===
+          "settings" && (
+          <Settings
+            settings={
+              settings
+            }
+            onSaveSettings={
+              handleSaveSettings
+            }
+            currentUser={
+              currentUser
+            }
+            users={[]}
+            onUpdateUserPassword={
+              handleUpdateUserPassword
+            }
+            onOpenAuthModal={
+              handleOpenLogin
             }
           />
         )}
+      </main>
+
+      {isPharmacyStaff && (
+        <AddDrugModal
+          isOpen={
+            isAddDrugOpen
+          }
+          onClose={() => {
+            setIsAddDrugOpen(
+              false,
+            );
+            setEditingDrug(null);
+          }}
+          onSave={
+            handleSaveDrug
+          }
+          editingDrug={
+            editingDrug
+          }
+          settings={
+            settings
+          }
+          nextCodeNumber={
+            drugs.length + 1
+          }
+        />
+      )}
 
       <LogoutModal
         isOpen={

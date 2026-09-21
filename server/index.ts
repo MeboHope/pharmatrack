@@ -19,6 +19,7 @@ import auditLogsRouter from "./routes/audit-logs.js";
 import stockReceivingRouter from "./routes/stock-receiving.js";
 import accountRouter from "./routes/account.js";
 import superAdminRouter from "./routes/super-admin.js";
+import superAdminPlatformRouter from "./routes/super-admin-platform.js";
 
 import { generalApiRateLimiter } from "./middleware/rateLimit.js";
 import { securityHeaders } from "./middleware/security.js";
@@ -246,6 +247,10 @@ app.use(
 app.use(
   "/api/super-admin",
   superAdminRouter,
+);
+app.use(
+  "/api/super-admin",
+  superAdminPlatformRouter,
 );
 
 /* ============================================================

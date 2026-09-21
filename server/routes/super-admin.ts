@@ -16,6 +16,293 @@ router.use(authenticate);
 router.use(requireSuperAdmin);
 
 /* ============================================================
+   PLATFORM USER TYPES
+   ============================================================ */
+
+const organizationRoles = [
+  "ADMIN",
+  "PHARMACIST",
+  "CLINICIAN",
+] as const;
+
+type OrganizationRole =
+  (typeof organizationRoles)[number];
+
+const isOrganizationRole = (
+  value: unknown,
+): value is OrganizationRole => {
+  return (
+    typeof value === "string" &&
+    organizationRoles.includes(
+      value as OrganizationRole,
+    )
+  );
+};
+
+/* ============================================================
+   GET PLATFORM USERS
+   ============================================================
+
+   Super Admin operates at platform level and therefore
+   cannot use the normal tenant-scoped /api/users endpoint.
+
+   This endpoint provides a safe platform-level user directory
+   for Super Admin only.
+
+   Optional query parameters:
+     ?search=john
+     ?search=john@example.com
+     ?organizationId=...
+*/
+router.get(
+  "/users",
+  async (request, response) => {
+    try {
+      const search =
+        typeof request.query.search === "string"
+          ? request.query.search.trim()
+          : "";
+
+      const organizationId =
+        typeof request.query.organizationId === "string"
+          ? request.query.organizationId.trim()
+          : "";
+
+      const users =
+        await prisma.user.findMany({
+          where: {
+            role: {
+              not: "SUPER_ADMIN",
+            },
+
+            ...(search
+              ? {
+                  OR: [
+                    {
+                      name: {
+                        contains: search,
+                        mode: "insensitive",
+                      },
+                    },
+                    {
+                      email: {
+                        contains: search,
+                        mode: "insensitive",
+                      },
+                    },
+                    {
+                      phone: {
+                        contains: search,
+                        mode: "insensitive",
+                      },
+                    },
+                  ],
+                }
+              : {}),
+
+            ...(organizationId
+              ? {
+                  memberships: {
+                    some: {
+                      organizationId,
+                    },
+                  },
+                }
+              : {}),
+          },
+
+          orderBy: [
+            {
+              createdAt: "desc",
+            },
+          ],
+
+          take: 100,
+
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            isVerified: true,
+            createdAt: true,
+            updatedAt: true,
+
+            memberships: {
+              select: {
+                id: true,
+                role: true,
+                createdAt: true,
+                organization: {
+                  select: {
+                    id: true,
+                    name: true,
+                    type: true,
+                    status: true,
+                  },
+                },
+              },
+              orderBy: {
+                createdAt: "asc",
+              },
+            },
+          },
+        });
+
+      response.json({
+        success: true,
+        users: users.map((user) => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          systemRole: user.role,
+          isVerified: user.isVerified,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+
+          organizations:
+            user.memberships.map(
+              (membership) => ({
+                id: membership.organization.id,
+                name: membership.organization.name,
+                type: membership.organization.type,
+                status:
+                  membership.organization.status,
+                role: membership.role,
+                membershipId: membership.id,
+                joinedAt:
+                  membership.createdAt,
+              }),
+            ),
+        })),
+      });
+    } catch (error) {
+      console.error(
+        "Failed to fetch platform users:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message:
+          "Failed to fetch platform users",
+      });
+    }
+  },
+);
+
+/* ============================================================
+   GET SINGLE PLATFORM USER
+   ============================================================ */
+
+router.get(
+  "/users/:id",
+  async (request, response) => {
+    try {
+      const user =
+        await prisma.user.findUnique({
+          where: {
+            id: request.params.id,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            isVerified: true,
+            createdAt: true,
+            updatedAt: true,
+
+            memberships: {
+              select: {
+                id: true,
+                role: true,
+                createdAt: true,
+                organization: {
+                  select: {
+                    id: true,
+                    name: true,
+                    type: true,
+                    status: true,
+                  },
+                },
+              },
+              orderBy: {
+                createdAt: "asc",
+              },
+            },
+          },
+        });
+
+      if (!user) {
+        response.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+
+        return;
+      }
+
+      /*
+       * Super Admin accounts are deliberately kept out of
+       * normal platform-user management.
+       */
+      if (user.role === "SUPER_ADMIN") {
+        response.status(403).json({
+          success: false,
+          message:
+            "Super Admin accounts cannot be managed as organization users.",
+        });
+
+        return;
+      }
+
+      response.json({
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          systemRole: user.role,
+          isVerified: user.isVerified,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          organizations:
+            user.memberships.map(
+              (membership) => ({
+                id: membership.organization.id,
+                name: membership.organization.name,
+                type: membership.organization.type,
+                status:
+                  membership.organization.status,
+                role: membership.role,
+                membershipId: membership.id,
+                joinedAt:
+                  membership.createdAt,
+              }),
+            ),
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to fetch platform user:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message:
+          "Failed to fetch platform user",
+      });
+    }
+  },
+);
+
+/* ============================================================
    GET ALL ORGANIZATIONS
    ============================================================ */
 
@@ -281,10 +568,8 @@ router.put(
 
       if (
         name !== undefined &&
-        (
-          typeof name !== "string" ||
-          !name.trim()
-        )
+        (typeof name !== "string" ||
+          !name.trim())
       ) {
         response.status(400).json({
           success: false,
@@ -691,11 +976,7 @@ router.post(
         return;
       }
 
-      if (
-        role !== "ADMIN" &&
-        role !== "PHARMACIST" &&
-        role !== "CLINICIAN"
-      ) {
+      if (!isOrganizationRole(role)) {
         response.status(400).json({
           success: false,
           message:
@@ -725,7 +1006,15 @@ router.post(
       const user =
         await prisma.user.findUnique({
           where: {
-            id: userId,
+            id: userId.trim(),
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            isVerified: true,
           },
         });
 
@@ -733,7 +1022,7 @@ router.post(
         response.status(404).json({
           success: false,
           message:
-            "User not found",
+            "The selected user could not be found.",
         });
 
         return;
@@ -756,7 +1045,7 @@ router.post(
               organizationId_userId: {
                 organizationId:
                   request.params.id,
-                userId,
+                userId: user.id,
               },
             },
           },
@@ -778,12 +1067,8 @@ router.post(
             data: {
               organizationId:
                 request.params.id,
-              userId,
-              role:
-                role as
-                  | "ADMIN"
-                  | "PHARMACIST"
-                  | "CLINICIAN",
+              userId: user.id,
+              role,
             },
             include: {
               user: {
@@ -800,13 +1085,17 @@ router.post(
         );
 
       await auditService.log({
-        action: "ORGANIZATION_MEMBER_ADDED",
-        entity: "OrganizationMembership",
+        action:
+          "ORGANIZATION_MEMBER_ADDED",
+        entity:
+          "OrganizationMembership",
         entityId: membership.id,
         organizationId:
           organization.id,
         details: JSON.stringify({
-          userId,
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
           role,
         }),
         userId: request.auth?.sub,
@@ -848,11 +1137,7 @@ router.put(
         role?: unknown;
       };
 
-      if (
-        role !== "ADMIN" &&
-        role !== "PHARMACIST" &&
-        role !== "CLINICIAN"
-      ) {
+      if (!isOrganizationRole(role)) {
         response.status(400).json({
           success: false,
           message:
@@ -932,11 +1217,7 @@ router.put(
               id: membership.id,
             },
             data: {
-              role:
-                role as
-                  | "ADMIN"
-                  | "PHARMACIST"
-                  | "CLINICIAN",
+              role,
             },
             include: {
               user: {
