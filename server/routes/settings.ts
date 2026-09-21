@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 
 import { prisma } from "../prisma.js";
@@ -95,6 +96,7 @@ router.get(
         settings =
           await prisma.pharmacySettings.create({
             data: {
+              id: randomUUID(),
               pharmacyName: "AfyaLink Pharmacy",
               tagline:
                 "Healthcare & Wellness Center",
@@ -264,6 +266,7 @@ router.put(
           })
         : await prisma.pharmacySettings.create({
             data: {
+              id: randomUUID(),
               ...data,
               Organization: {
                 connect: {
