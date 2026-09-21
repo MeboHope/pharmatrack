@@ -1,4 +1,3 @@
-
 import {
   Router,
   type Request,
@@ -8,6 +7,7 @@ import {
 import { prisma } from "../prisma";
 import {
   requireAuth,
+  requireOrganizationContext,
   requireRole,
 } from "../middleware/auth";
 
@@ -20,8 +20,12 @@ const router = Router();
  *
  * Audit logs contain sensitive operational information.
  * Only authenticated ADMIN users may access them.
+ *
+ * Audit logs are also tenant-isolated so an administrator
+ * can only access logs belonging to their organization.
  */
 router.use(requireAuth);
+router.use(requireOrganizationContext);
 router.use(requireRole("ADMIN"));
 
 /**
@@ -50,6 +54,18 @@ router.get(
     res: Response,
   ) => {
     try {
+      const organizationId =
+        req.auth?.organizationId;
+
+      if (!organizationId) {
+        res.status(403).json({
+          success: false,
+          message:
+            "Organization context is required.",
+        });
+        return;
+      }
+
       const parsedPage = Number(
         req.query.page ?? 1,
       );
@@ -89,10 +105,13 @@ router.get(
           : "";
 
       const where: {
+        organizationId: string;
         entity?: string;
         action?: string;
         userId?: string;
-      } = {};
+      } = {
+        organizationId,
+      };
 
       if (entity) {
         where.entity = entity;
@@ -129,7 +148,7 @@ router.get(
             ipAddress: true,
             createdAt: true,
             userId: true,
-            user: {
+            User: {
               select: {
                 id: true,
                 name: true,
@@ -188,6 +207,9 @@ router.get(
  * =========================================================
  *
  * Retrieve one audit record.
+ *
+ * The organization filter is mandatory so an administrator
+ * cannot retrieve another organization's audit record by ID.
  */
 router.get(
   "/:id",
@@ -196,10 +218,23 @@ router.get(
     res: Response,
   ) => {
     try {
+      const organizationId =
+        req.auth?.organizationId;
+
+      if (!organizationId) {
+        res.status(403).json({
+          success: false,
+          message:
+            "Organization context is required.",
+        });
+        return;
+      }
+
       const log =
-        await prisma.auditLog.findUnique({
+        await prisma.auditLog.findFirst({
           where: {
             id: req.params.id,
+            organizationId,
           },
           select: {
             id: true,
@@ -210,7 +245,7 @@ router.get(
             ipAddress: true,
             createdAt: true,
             userId: true,
-            user: {
+            User: {
               select: {
                 id: true,
                 name: true,

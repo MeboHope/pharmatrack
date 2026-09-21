@@ -1,17 +1,18 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 
-import { prisma } from "../prisma.js";
-
+import { prisma } from "../prisma";
 import {
   authenticate,
+  requireOrganizationContext,
   requireRole,
-} from "../middleware/auth.js";
-
-import { recordAudit } from "../middleware/audit.js";
+} from "../middleware/auth";
+import { recordAudit } from "../middleware/audit";
 
 const router = Router();
 
 router.use(authenticate);
+router.use(requireOrganizationContext);
 
 const patientStaff = requireRole(
   "ADMIN",
@@ -21,13 +22,91 @@ const patientStaff = requireRole(
 
 const adminOnly = requireRole("ADMIN");
 
+const isValidEmail = (value: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+};
+
+const parseOptionalAge = (
+  value: unknown,
+): number | null | undefined => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const age = Number(value);
+
+  if (
+    !Number.isInteger(age) ||
+    age < 0 ||
+    age > 150
+  ) {
+    return undefined;
+  }
+
+  return age;
+};
+
+const normalizeGender = (
+  value: unknown,
+):
+  | "MALE"
+  | "FEMALE"
+  | "OTHER"
+  | null
+  | undefined => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (
+    value === "MALE" ||
+    value === "FEMALE" ||
+    value === "OTHER"
+  ) {
+    return value;
+  }
+
+  return undefined;
+};
+
+/**
+ * GET /api/patients
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * Only patients belonging to the authenticated
+ * user's organization are returned.
+ */
 router.get(
   "/",
   patientStaff,
-  async (_request, response, next) => {
+  async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const patients =
         await prisma.patient.findMany({
+          where: {
+            organizationId,
+          },
           orderBy: {
             createdAt: "desc",
           },
@@ -43,15 +122,36 @@ router.get(
   },
 );
 
+/**
+ * GET /api/patients/:id
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * Organization ownership is checked as part of
+ * the database lookup.
+ */
 router.get(
   "/:id",
   patientStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const patient =
-        await prisma.patient.findUnique({
+        await prisma.patient.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -73,12 +173,37 @@ router.get(
   },
 );
 
+/**
+ * POST /api/patients
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * organizationId is taken from the authenticated
+ * organization context and cannot be supplied by
+ * the client.
+ */
 router.post(
   "/",
   patientStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
+      const body =
+        request.body ?? {};
+
       const {
+        id,
         name,
         phone,
         email,
@@ -86,7 +211,7 @@ router.post(
         gender,
         address,
         allergies,
-      } = request.body ?? {};
+      } = body;
 
       if (
         typeof name !== "string" ||
@@ -112,115 +237,157 @@ router.post(
         return;
       }
 
-      let parsedAge:
-        | number
-        | undefined;
-
       if (
-        age !== undefined &&
-        age !== null &&
-        age !== ""
+        email !== undefined &&
+        email !== null &&
+        email !== ""
       ) {
-        parsedAge = Number(age);
-
         if (
-          !Number.isInteger(parsedAge) ||
-          parsedAge < 0 ||
-          parsedAge > 150
+          typeof email !== "string" ||
+          !isValidEmail(email.trim())
         ) {
           response.status(400).json({
             success: false,
             message:
-              "Patient age must be a valid whole number between 0 and 150.",
+              "A valid email address is required.",
           });
           return;
         }
       }
 
-      const validGenders = [
-        "MALE",
-        "FEMALE",
-        "OTHER",
-      ];
+      const parsedAge =
+        parseOptionalAge(age);
 
       if (
-        gender !== undefined &&
-        gender !== null &&
-        gender !== "" &&
-        !validGenders.includes(
-          String(gender).toUpperCase(),
-        )
+        parsedAge === undefined
       ) {
         response.status(400).json({
           success: false,
           message:
-            "Invalid patient gender.",
+            "Age must be a valid whole number between 0 and 150.",
         });
         return;
       }
 
+      const parsedGender =
+        normalizeGender(gender);
+
+      if (
+        parsedGender === undefined
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Gender must be MALE, FEMALE, or OTHER.",
+        });
+        return;
+      }
+
+      const patientId =
+        typeof id === "string" &&
+        id.trim()
+          ? id.trim()
+          : undefined;
+
       const patient =
         await prisma.patient.create({
           data: {
+            ...(patientId && { id: patientId }),
             name: name.trim(),
             phone: phone.trim(),
             email:
-              typeof email === "string" &&
+              typeof email ===
+                "string" &&
               email.trim()
-                ? email.trim().toLowerCase()
+                ? email.trim()
                 : null,
             age: parsedAge,
-            gender:
-              gender !== undefined &&
-              gender !== null &&
-              gender !== ""
-                ? String(gender).toUpperCase() as
-                    "MALE" |
-                    "FEMALE" |
-                    "OTHER"
-                : undefined,
+            gender: parsedGender,
             address:
-              typeof address === "string" &&
+              typeof address ===
+                "string" &&
               address.trim()
                 ? address.trim()
                 : null,
             allergies:
-              typeof allergies === "string" &&
+              typeof allergies ===
+                "string" &&
               allergies.trim()
                 ? allergies.trim()
                 : null,
+            organizationId,
           },
         });
 
-      await recordAudit(request, {
-        action: "PATIENT_CREATED",
-        entity: "Patient",
-        entityId: patient.id,
-        details: {
-          patientId: patient.id,
-          name: patient.name,
+      await recordAudit(
+        request,
+        {
+          action: "CREATE",
+          entity: "Patient",
+          entityId: patient.id,
+          details: {
+            name: patient.name,
+            phone: patient.phone,
+          },
         },
-      });
+      );
 
       response.status(201).json({
         success: true,
         data: patient,
       });
     } catch (error) {
+      if (
+        error instanceof
+        Prisma.PrismaClientKnownRequestError
+      ) {
+        if (
+          error.code === "P2002"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "A patient with this identifier already exists.",
+          });
+          return;
+        }
+      }
+
       next(error);
     }
   },
 );
 
+/**
+ * PUT /api/patients/:id
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * The existing patient must belong to the
+ * authenticated organization before it can be changed.
+ */
 router.put(
   "/:id",
   patientStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const existing =
-        await prisma.patient.findUnique({
+        await prisma.patient.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -235,24 +402,15 @@ router.put(
       const body =
         request.body ?? {};
 
-      const data: {
-        name?: string;
-        phone?: string;
-        email?: string | null;
-        age?: number | null;
-        gender?:
-          | "MALE"
-          | "FEMALE"
-          | "OTHER"
-          | null;
-        address?: string | null;
-        allergies?: string | null;
-        totalVisits?: number;
-      } = {};
+      const data:
+        Prisma.PatientUpdateInput = {};
 
-      if (body.name !== undefined) {
+      if (
+        body.name !== undefined
+      ) {
         if (
-          typeof body.name !== "string" ||
+          typeof body.name !==
+            "string" ||
           !body.name.trim()
         ) {
           response.status(400).json({
@@ -267,9 +425,12 @@ router.put(
           body.name.trim();
       }
 
-      if (body.phone !== undefined) {
+      if (
+        body.phone !== undefined
+      ) {
         if (
-          typeof body.phone !== "string" ||
+          typeof body.phone !==
+            "string" ||
           !body.phone.trim()
         ) {
           response.status(400).json({
@@ -284,83 +445,86 @@ router.put(
           body.phone.trim();
       }
 
-      if (body.email !== undefined) {
-        data.email =
-          typeof body.email === "string" &&
-          body.email.trim()
-            ? body.email
-                .trim()
-                .toLowerCase()
-            : null;
-      }
-
-      if (body.age !== undefined) {
+      if (
+        body.email !== undefined
+      ) {
         if (
-          body.age === null ||
-          body.age === ""
+          body.email !== null &&
+          body.email !== ""
         ) {
-          data.age = null;
-        } else {
-          const parsedAge =
-            Number(body.age);
-
           if (
-            !Number.isInteger(
-              parsedAge,
-            ) ||
-            parsedAge < 0 ||
-            parsedAge > 150
+            typeof body.email !==
+              "string" ||
+            !isValidEmail(
+              body.email.trim(),
+            )
           ) {
             response.status(400).json({
               success: false,
               message:
-                "Patient age must be a valid whole number between 0 and 150.",
+                "A valid email address is required.",
             });
             return;
           }
 
-          data.age = parsedAge;
-        }
-      }
-
-      if (body.gender !== undefined) {
-        if (
-          body.gender === null ||
-          body.gender === ""
-        ) {
-          data.gender = null;
+          data.email =
+            body.email.trim();
         } else {
-          const gender =
-            String(
-              body.gender,
-            ).toUpperCase();
-
-          if (
-            ![
-              "MALE",
-              "FEMALE",
-              "OTHER",
-            ].includes(gender)
-          ) {
-            response.status(400).json({
-              success: false,
-              message:
-                "Invalid patient gender.",
-            });
-            return;
-          }
-
-          data.gender =
-            gender as
-              | "MALE"
-              | "FEMALE"
-              | "OTHER";
+          data.email = null;
         }
       }
 
-      if (body.address !== undefined) {
+      if (
+        body.age !== undefined
+      ) {
+        const parsedAge =
+          parseOptionalAge(
+            body.age,
+          );
+
+        if (
+          parsedAge === undefined
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Age must be a valid whole number between 0 and 150.",
+          });
+          return;
+        }
+
+        data.age = parsedAge;
+      }
+
+      if (
+        body.gender !== undefined
+      ) {
+        const parsedGender =
+          normalizeGender(
+            body.gender,
+          );
+
+        if (
+          parsedGender === undefined
+        ) {
+          response.status(400).json({
+            success: false,
+            message:
+              "Gender must be MALE, FEMALE, or OTHER.",
+          });
+          return;
+        }
+
+        data.gender =
+          parsedGender;
+      }
+
+      if (
+        body.address !== undefined
+      ) {
         data.address =
-          typeof body.address === "string" &&
+          typeof body.address ===
+            "string" &&
           body.address.trim()
             ? body.address.trim()
             : null;
@@ -371,37 +535,11 @@ router.put(
         undefined
       ) {
         data.allergies =
-          typeof body.allergies === "string" &&
+          typeof body.allergies ===
+            "string" &&
           body.allergies.trim()
             ? body.allergies.trim()
             : null;
-      }
-
-      if (
-        body.totalVisits !==
-        undefined
-      ) {
-        const totalVisits =
-          Number(
-            body.totalVisits,
-          );
-
-        if (
-          !Number.isInteger(
-            totalVisits,
-          ) ||
-          totalVisits < 0
-        ) {
-          response.status(400).json({
-            success: false,
-            message:
-              "Total visits must be a valid non-negative whole number.",
-          });
-          return;
-        }
-
-        data.totalVisits =
-          totalVisits;
       }
 
       const patient =
@@ -412,35 +550,86 @@ router.put(
           data,
         });
 
-      await recordAudit(request, {
-        action: "PATIENT_UPDATED",
-        entity: "Patient",
-        entityId: patient.id,
-        details: {
-          patientId: patient.id,
-          name: patient.name,
+      await recordAudit(
+        request,
+        {
+          action: "UPDATE",
+          entity: "Patient",
+          entityId: patient.id,
+          details: {
+            name: patient.name,
+            phone: patient.phone,
+          },
         },
-      });
+      );
 
       response.json({
         success: true,
         data: patient,
       });
     } catch (error) {
+      if (
+        error instanceof
+        Prisma.PrismaClientKnownRequestError
+      ) {
+        if (
+          error.code === "P2025"
+        ) {
+          response.status(404).json({
+            success: false,
+            message:
+              "Patient not found.",
+          });
+          return;
+        }
+
+        if (
+          error.code === "P2002"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "A patient with this identifier already exists.",
+          });
+          return;
+        }
+      }
+
       next(error);
     }
   },
 );
 
+/**
+ * DELETE /api/patients/:id
+ *
+ * ADMIN ONLY
+ *
+ * Only patients belonging to the authenticated
+ * organization may be deleted.
+ */
 router.delete(
   "/:id",
   adminOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const existing =
-        await prisma.patient.findUnique({
+        await prisma.patient.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -458,15 +647,18 @@ router.delete(
         },
       });
 
-      await recordAudit(request, {
-        action: "PATIENT_DELETED",
-        entity: "Patient",
-        entityId: existing.id,
-        details: {
-          patientId: existing.id,
-          name: existing.name,
+      await recordAudit(
+        request,
+        {
+          action: "DELETE",
+          entity: "Patient",
+          entityId: existing.id,
+          details: {
+            name: existing.name,
+            phone: existing.phone,
+          },
         },
-      });
+      );
 
       response.json({
         success: true,
@@ -474,6 +666,33 @@ router.delete(
           "Patient deleted successfully.",
       });
     } catch (error) {
+      if (
+        error instanceof
+        Prisma.PrismaClientKnownRequestError
+      ) {
+        if (
+          error.code === "P2003"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "This patient cannot be deleted because they are referenced by existing transactions.",
+          });
+          return;
+        }
+
+        if (
+          error.code === "P2025"
+        ) {
+          response.status(404).json({
+            success: false,
+            message:
+              "Patient not found.",
+          });
+          return;
+        }
+      }
+
       next(error);
     }
   },

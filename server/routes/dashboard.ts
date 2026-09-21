@@ -1,11 +1,15 @@
 import { Router } from "express";
 
 import { prisma } from "../prisma.js";
-import { authenticate } from "../middleware/auth.js";
+import {
+  authenticate,
+  requireOrganizationContext,
+} from "../middleware/auth.js";
 
 const router = Router();
 
 router.use(authenticate);
+router.use(requireOrganizationContext);
 
 /**
  * GET /api/dashboard
@@ -13,10 +17,25 @@ router.use(authenticate);
  * Provides the aggregated information required by
  * the PharmaTrack dashboard.
  *
- * Authentication is required.
+ * Authentication and organization context are required.
+ *
+ * All organization-owned data is restricted to the
+ * authenticated user's active organization.
  */
-router.get("/", async (_request, response, next) => {
+router.get("/", async (request, response, next) => {
   try {
+    const organizationId =
+      request.auth?.organizationId;
+
+    if (!organizationId) {
+      response.status(403).json({
+        success: false,
+        message:
+          "Organization context is required.",
+      });
+      return;
+    }
+
     const [
       totalDrugs,
       lowStockDrugs,
@@ -29,50 +48,75 @@ router.get("/", async (_request, response, next) => {
       recentAdjustments,
       salesAggregate,
     ] = await prisma.$transaction([
-      prisma.drug.count(),
+      prisma.drug.count({
+        where: {
+          organizationId,
+        },
+      }),
 
       prisma.drug.count({
         where: {
+          organizationId,
           status: "LOW_STOCK",
         },
       }),
 
       prisma.drug.count({
         where: {
+          organizationId,
           status: "OUT_OF_STOCK",
         },
       }),
 
       prisma.drug.count({
         where: {
+          organizationId,
           status: "EXPIRED",
         },
       }),
 
-      prisma.patient.count(),
+      prisma.patient.count({
+        where: {
+          organizationId,
+        },
+      }),
 
-      prisma.supplier.count(),
+      prisma.supplier.count({
+        where: {
+          organizationId,
+        },
+      }),
 
-      prisma.dispenseTransaction.count(),
+      prisma.dispenseTransaction.count({
+        where: {
+          organizationId,
+        },
+      }),
 
       prisma.dispenseTransaction.findMany({
+        where: {
+          organizationId,
+        },
         take: 5,
         orderBy: {
           date: "desc",
         },
         include: {
-          items: true,
+          PrescriptionItem: true,
           patient: true,
         },
       }),
 
       prisma.stockAdjustment.findMany({
+        where: {
+          organizationId,
+        },
         take: 5,
         orderBy: {
           date: "desc",
         },
         include: {
-          user: {
+          User: {
             select: {
               id: true,
               name: true,
@@ -87,6 +131,7 @@ router.get("/", async (_request, response, next) => {
           totalAmount: true,
         },
         where: {
+          organizationId,
           status: "COMPLETED",
         },
       }),

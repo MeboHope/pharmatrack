@@ -1,4 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, {
+  useEffect,
+  useState,
+} from "react";
+
 import {
   Plus,
   RefreshCw,
@@ -18,8 +22,17 @@ import {
 
 interface StockAdjustmentsProps {
   drugs: Drug[];
+
   adjustments?: StockAdjustment[];
+
   settings: PharmacySettings;
+
+  /*
+   * Clinicians can view adjustment history
+   * but cannot create adjustments.
+   */
+  readOnly?: boolean;
+
   onAddAdjustment?: (
     adjustment: StockAdjustment,
   ) => void;
@@ -31,10 +44,13 @@ export const StockAdjustments: React.FC<
   drugs = [],
   adjustments = [],
   settings,
+  readOnly = false,
   onAddAdjustment,
 }) => {
   const [items, setItems] =
-    useState<StockAdjustment[]>(adjustments);
+    useState<StockAdjustment[]>(
+      adjustments,
+    );
 
   const [showModal, setShowModal] =
     useState(false);
@@ -46,28 +62,26 @@ export const StockAdjustments: React.FC<
     useState(0);
 
   const [adjType, setAdjType] =
-    useState<StockAdjustment["type"]>(
-      "Expiry Removal",
-    );
+    useState<
+      StockAdjustment["type"]
+    >("Expiry Removal");
 
-  const [reason, setReason] = useState("");
+  const [reason, setReason] =
+    useState("");
 
   const [isSaving, setIsSaving] =
     useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const selectedDrug = drugs.find(
-    (drug) => drug.id === selectedDrugId,
-  );
+  const selectedDrug =
+    drugs.find(
+      (drug) =>
+        drug.id ===
+        selectedDrugId,
+    );
 
-  /*
-   * Keep the local display synchronized
-   * with the parent data source.
-   *
-   * The parent is now the source of truth
-   * for the adjustment records.
-   */
   useEffect(() => {
     setItems(adjustments);
   }, [adjustments]);
@@ -80,7 +94,9 @@ export const StockAdjustments: React.FC<
   };
 
   const closeModal = () => {
-    if (isSaving) return;
+    if (isSaving) {
+      return;
+    }
 
     setShowModal(false);
     resetForm();
@@ -89,13 +105,16 @@ export const StockAdjustments: React.FC<
   const handleDrugChange = (
     event: React.ChangeEvent<HTMLSelectElement>,
   ) => {
-    const drugId = event.target.value;
+    const drugId =
+      event.target.value;
 
     setSelectedDrugId(drugId);
 
-    const drug = drugs.find(
-      (item) => item.id === drugId,
-    );
+    const drug =
+      drugs.find(
+        (item) =>
+          item.id === drugId,
+      );
 
     if (drug) {
       setAdjustedQty(drug.qty);
@@ -111,13 +130,24 @@ export const StockAdjustments: React.FC<
 
     setError("");
 
+    if (readOnly) {
+      setError(
+        "You have read-only access to stock adjustment history.",
+      );
+      return;
+    }
+
     if (!selectedDrug) {
-      setError("Please select a drug.");
+      setError(
+        "Please select a drug.",
+      );
       return;
     }
 
     if (
-      !Number.isInteger(adjustedQty) ||
+      !Number.isInteger(
+        adjustedQty,
+      ) ||
       adjustedQty < 0
     ) {
       setError(
@@ -127,7 +157,9 @@ export const StockAdjustments: React.FC<
     }
 
     if (!reason.trim()) {
-      setError("Please provide a reason.");
+      setError(
+        "Please provide a reason.",
+      );
       return;
     }
 
@@ -135,26 +167,29 @@ export const StockAdjustments: React.FC<
 
     try {
       const created =
-        await stockAdjustmentsService.create({
-          drugId: selectedDrug.id,
-          adjustedQty,
-          type: adjType,
-          reason: reason.trim(),
-        });
+        await stockAdjustmentsService.create(
+          {
+            drugId:
+              selectedDrug.id,
+            adjustedQty,
+            type: adjType,
+            reason:
+              reason.trim(),
+          },
+        );
 
-      /*
-       * Update the display immediately.
-       * The parent callback then updates the
-       * application's central data state.
-       */
       setItems((previous) => [
         created,
         ...previous.filter(
-          (item) => item.id !== created.id,
+          (item) =>
+            item.id !==
+            created.id,
         ),
       ]);
 
-      onAddAdjustment?.(created);
+      onAddAdjustment?.(
+        created,
+      );
 
       setShowModal(false);
       resetForm();
@@ -174,29 +209,44 @@ export const StockAdjustments: React.FC<
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Stock Adjustments & Audit Logs
+            Stock Adjustments &
+            Audit Logs
           </h1>
 
           <p className="text-sm text-slate-500 font-medium mt-1">
-            Reconcile inventory, record damaged stock,
-            or quarantine expired batches.
+            Reconcile inventory,
+            record damaged stock,
+            or quarantine expired
+            batches.
           </p>
+
+          {readOnly && (
+            <p className="text-xs font-semibold text-sky-700 mt-2">
+              Read-only access:
+              adjustment history can
+              be viewed but not
+              changed.
+            </p>
+          )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setError("");
-            setShowModal(true);
-          }}
-          className="px-4 py-2 text-xs font-bold text-white rounded-lg shadow-sm flex items-center gap-1.5"
-          style={{
-            backgroundColor: "#0d8065",
-          }}
-        >
-          <Plus className="w-4 h-4 stroke-[3]" />
-          Record Adjustment
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setShowModal(true);
+            }}
+            className="px-4 py-2 text-xs font-bold text-white rounded-lg shadow-sm flex items-center gap-1.5"
+            style={{
+              backgroundColor:
+                "#0d8065",
+            }}
+          >
+            <Plus className="w-4 h-4 stroke-[3]" />
+            Record Adjustment
+          </button>
+        )}
       </div>
 
       {error && (
@@ -204,7 +254,9 @@ export const StockAdjustments: React.FC<
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
 
           <div>
-            <strong>Operation failed</strong>
+            <strong>
+              Operation failed
+            </strong>
 
             <p className="mt-0.5">
               {error}
@@ -216,7 +268,9 @@ export const StockAdjustments: React.FC<
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6">
         {items.length === 0 ? (
           <div className="py-12 text-center text-sm text-slate-500">
-            No stock adjustments have been recorded yet.
+            No stock adjustments
+            have been recorded
+            yet.
           </div>
         ) : (
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -258,262 +312,356 @@ export const StockAdjustments: React.FC<
               </thead>
 
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                {items.map((adjustment) => (
-                  <tr
-                    key={adjustment.id}
-                    className="hover:bg-slate-50/80 transition-colors"
-                  >
-                    <td className="py-3 px-3.5 font-bold text-[#22577A] text-xs whitespace-nowrap">
-                      {adjustment.id}
-                    </td>
+                {items.map(
+                  (adjustment) => (
+                    <tr
+                      key={
+                        adjustment.id
+                      }
+                      className="hover:bg-slate-50/80 transition-colors"
+                    >
+                      <td className="py-3 px-3.5 font-bold text-[#22577A] text-xs whitespace-nowrap">
+                        {
+                          adjustment.id
+                        }
+                      </td>
 
-                    <td className="py-3 px-3.5 text-xs text-slate-500 whitespace-nowrap">
-                      {adjustment.date}
-                    </td>
+                      <td className="py-3 px-3.5 text-xs text-slate-500 whitespace-nowrap">
+                        {
+                          adjustment.date
+                        }
+                      </td>
 
-                    <td className="py-3 px-3.5 font-bold text-slate-900 text-xs whitespace-nowrap">
-                      {adjustment.drugName}
-                    </td>
+                      <td className="py-3 px-3.5 font-bold text-slate-900 text-xs whitespace-nowrap">
+                        {
+                          adjustment.drugName
+                        }
+                      </td>
 
-                    <td className="py-3 px-3.5 text-xs text-slate-600 whitespace-nowrap">
-                      {adjustment.batchNo}
-                    </td>
+                      <td className="py-3 px-3.5 text-xs text-slate-600 whitespace-nowrap">
+                        {
+                          adjustment.batchNo
+                        }
+                      </td>
 
-                    <td className="py-3 px-3.5 text-xs font-bold whitespace-nowrap">
-                      <span className="text-slate-400">
-                        {adjustment.previousQty}
-                      </span>
+                      <td className="py-3 px-3.5 text-xs font-bold whitespace-nowrap">
+                        <span className="text-slate-400">
+                          {
+                            adjustment.previousQty
+                          }
+                        </span>
 
-                      <span className="mx-1.5 text-slate-400">
-                        →
-                      </span>
+                        <span className="mx-1.5 text-slate-400">
+                          →
+                        </span>
 
-                      <span className="text-emerald-700">
-                        {adjustment.adjustedQty}
-                      </span>
-                    </td>
+                        <span className="text-emerald-700">
+                          {
+                            adjustment.adjustedQty
+                          }
+                        </span>
+                      </td>
 
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                        {adjustment.type}
-                      </span>
-                    </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          {
+                            adjustment.type
+                          }
+                        </span>
+                      </td>
 
-                    <td className="py-3 px-3.5 text-xs text-slate-600 max-w-xs truncate">
-                      {adjustment.reason}
-                    </td>
+                      <td className="py-3 px-3.5 text-xs text-slate-600 max-w-xs truncate">
+                        {
+                          adjustment.reason
+                        }
+                      </td>
 
-                    <td className="py-3 px-3.5 text-xs text-slate-500 whitespace-nowrap">
-                      {adjustment.adjustedBy}
-                    </td>
-                  </tr>
-                ))}
+                      <td className="py-3 px-3.5 text-xs text-slate-500 whitespace-nowrap">
+                        {
+                          adjustment.adjustedBy
+                        }
+                      </td>
+                    </tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  Record Stock Adjustment
-                </h2>
+      {!readOnly &&
+        showModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Record Stock
+                    Adjustment
+                  </h2>
 
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Changes are saved to the server database.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeModal}
-                disabled={isSaving}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-xs font-semibold mb-1">
-                  Select Drug Item{" "}
-                  <span className="text-red-500">
-                    *
-                  </span>
-                </label>
-
-                <select
-                  required
-                  value={selectedDrugId}
-                  onChange={handleDrugChange}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
-                >
-                  <option value="">
-                    Select drug to adjust...
-                  </option>
-
-                  {drugs.map((drug) => (
-                    <option
-                      key={drug.id}
-                      value={drug.id}
-                    >
-                      {drug.name} ({drug.code}) -
-                      Current Stock: {drug.qty}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedDrug && (
-                <div className="p-3 bg-slate-50 rounded-lg text-xs space-y-1 border border-slate-200">
-                  <div>
-                    <strong>Batch:</strong>{" "}
-                    {selectedDrug.batchNo}
-                  </div>
-
-                  <div>
-                    <strong>Current Stock:</strong>{" "}
-                    {selectedDrug.qty}{" "}
-                    {selectedDrug.unit}
-                  </div>
-
-                  <div>
-                    <strong>Pharmacy:</strong>{" "}
-                    {settings.pharmacyName}
-                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Changes are saved to
+                    the server database.
+                  </p>
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs font-semibold mb-1">
-                  New Adjusted Qty{" "}
-                  <span className="text-red-500">
-                    *
-                  </span>
-                </label>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  required
-                  value={adjustedQty}
-                  onChange={(event) => {
-                    const value =
-                      event.target.value;
-
-                    setAdjustedQty(
-                      value === ""
-                        ? 0
-                        : Math.max(
-                            0,
-                            Math.floor(
-                              Number(value) || 0,
-                            ),
-                          ),
-                    );
-                  }}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-bold focus:border-[#22577A] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">
-                  Adjustment Type{" "}
-                  <span className="text-red-500">
-                    *
-                  </span>
-                </label>
-
-                <select
-                  value={adjType}
-                  onChange={(event) =>
-                    setAdjType(
-                      event.target
-                        .value as StockAdjustment["type"],
-                    )
-                  }
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
-                >
-                  <option value="Expiry Removal">
-                    Expiry Removal
-                  </option>
-
-                  <option value="Loss / Damage">
-                    Loss / Damage
-                  </option>
-
-                  <option value="Audit Reconciliation">
-                    Audit Reconciliation
-                  </option>
-
-                  <option value="Return to Supplier">
-                    Return to Supplier
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">
-                  Reason / Notes{" "}
-                  <span className="text-red-500">
-                    *
-                  </span>
-                </label>
-
-                <textarea
-                  rows={3}
-                  required
-                  placeholder="Explain why stock count was adjusted..."
-                  value={reason}
-                  onChange={(event) =>
-                    setReason(
-                      event.target.value,
-                    )
-                  }
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={closeModal}
-                  disabled={isSaving}
-                  className="px-4 py-2 text-xs font-medium bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-50"
+                  onClick={
+                    closeModal
+                  }
+                  disabled={
+                    isSaving
+                  }
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                 >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-5 py-2 text-xs font-bold text-white rounded-lg disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-                  style={{
-                    backgroundColor: "#0d8065",
-                  }}
-                >
-                  {isSaving && (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  )}
-
-                  {isSaving
-                    ? "Saving..."
-                    : "Save Adjustment"}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
+
+              <form
+                onSubmit={
+                  handleSubmit
+                }
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Select Drug Item{" "}
+                    <span className="text-red-500">
+                      *
+                    </span>
+                  </label>
+
+                  <select
+                    required
+                    value={
+                      selectedDrugId
+                    }
+                    onChange={
+                      handleDrugChange
+                    }
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
+                  >
+                    <option value="">
+                      Select drug to
+                      adjust...
+                    </option>
+
+                    {drugs.map(
+                      (drug) => (
+                        <option
+                          key={
+                            drug.id
+                          }
+                          value={
+                            drug.id
+                          }
+                        >
+                          {
+                            drug.name
+                          }{" "}
+                          (
+                          {
+                            drug.code
+                          }
+                          ) -
+                          Current
+                          Stock:{" "}
+                          {
+                            drug.qty
+                          }
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </div>
+
+                {selectedDrug && (
+                  <div className="p-3 bg-slate-50 rounded-lg text-xs space-y-1 border border-slate-200">
+                    <div>
+                      <strong>
+                        Batch:
+                      </strong>{" "}
+                      {
+                        selectedDrug.batchNo
+                      }
+                    </div>
+
+                    <div>
+                      <strong>
+                        Current
+                        Stock:
+                      </strong>{" "}
+                      {
+                        selectedDrug.qty
+                      }{" "}
+                      {
+                        selectedDrug.unit
+                      }
+                    </div>
+
+                    <div>
+                      <strong>
+                        Pharmacy:
+                      </strong>{" "}
+                      {
+                        settings.pharmacyName
+                      }
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    New Adjusted Qty{" "}
+                    <span className="text-red-500">
+                      *
+                    </span>
+                  </label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    required
+                    value={
+                      adjustedQty
+                    }
+                    onChange={(
+                      event,
+                    ) => {
+                      const value =
+                        event.target
+                          .value;
+
+                      setAdjustedQty(
+                        value ===
+                          ""
+                          ? 0
+                          : Math.max(
+                              0,
+                              Math.floor(
+                                Number(
+                                  value,
+                                ) ||
+                                  0,
+                              ),
+                            ),
+                      );
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-bold focus:border-[#22577A] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Adjustment Type{" "}
+                    <span className="text-red-500">
+                      *
+                    </span>
+                  </label>
+
+                  <select
+                    value={
+                      adjType
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      setAdjType(
+                        event.target
+                          .value as StockAdjustment["type"],
+                      )
+                    }
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
+                  >
+                    <option value="Expiry Removal">
+                      Expiry Removal
+                    </option>
+
+                    <option value="Loss / Damage">
+                      Loss / Damage
+                    </option>
+
+                    <option value="Audit Reconciliation">
+                      Audit Reconciliation
+                    </option>
+
+                    <option value="Return to Supplier">
+                      Return to
+                      Supplier
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Reason / Notes{" "}
+                    <span className="text-red-500">
+                      *
+                    </span>
+                  </label>
+
+                  <textarea
+                    rows={3}
+                    required
+                    placeholder="Explain why stock count was adjusted..."
+                    value={
+                      reason
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      setReason(
+                        event.target
+                          .value,
+                      )
+                    }
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:border-[#22577A] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={
+                      closeModal
+                    }
+                    disabled={
+                      isSaving
+                    }
+                    className="px-4 py-2 text-xs font-medium bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={
+                      isSaving
+                    }
+                    className="px-5 py-2 text-xs font-bold text-white rounded-lg disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                    style={{
+                      backgroundColor:
+                        "#0d8065",
+                    }}
+                  >
+                    {isSaving && (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    )}
+
+                    {isSaving
+                      ? "Saving..."
+                      : "Save Adjustment"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
     </div>
   );
 };

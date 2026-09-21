@@ -3,6 +3,9 @@ import "dotenv/config";
 import { prisma } from "../server/prisma.js";
 import { hashPassword } from "../server/services/auth.js";
 
+const DEFAULT_ORGANIZATION_ID =
+  "pharmatrack-default-org";
+
 const requiredEnv = [
   "BOOTSTRAP_ADMIN_NAME",
   "BOOTSTRAP_ADMIN_EMAIL",
@@ -35,52 +38,155 @@ const adminPassword =
 async function main() {
   console.log("");
   console.log("==========================================");
-  console.log("     PharmaTrack Bootstrap Admin Seed");
+  console.log("     PharmaTrack Bootstrap Seed");
   console.log("==========================================");
 
-  const existingAdmin =
+  /*
+   * -------------------------------------------------------
+   * 1. Ensure the default organization exists
+   * -------------------------------------------------------
+   */
+
+  const organization =
+    await prisma.organization.upsert({
+      where: {
+        id: DEFAULT_ORGANIZATION_ID,
+      },
+      update: {},
+      create: {
+        id: DEFAULT_ORGANIZATION_ID,
+        name: "PharmaTrack",
+        type: "PHARMACY",
+        status: "ACTIVE",
+      },
+    });
+
+  console.log("");
+  console.log(
+    `Organization ready: ${organization.name}`,
+  );
+  console.log(
+    `Organization ID: ${organization.id}`,
+  );
+
+  /*
+   * -------------------------------------------------------
+   * 2. Find or create the bootstrap administrator
+   * -------------------------------------------------------
+   */
+
+  let admin =
     await prisma.user.findUnique({
       where: {
         email: adminEmail,
       },
     });
 
-  if (existingAdmin) {
+  if (admin) {
+    console.log("");
     console.log(
-      `Admin already exists: ${existingAdmin.email}`,
+      `Bootstrap administrator already exists: ${admin.email}`,
     );
     console.log(
-      "No changes were made to the existing account.",
+      "Existing account credentials were preserved.",
     );
-    return;
+  } else {
+    const passwordHash =
+      await hashPassword(adminPassword);
+
+    admin =
+      await prisma.user.create({
+        data: {
+          name: adminName,
+          email: adminEmail,
+          phone: adminPhone,
+          passwordHash,
+          role: "ADMIN",
+          isVerified: true,
+        },
+      });
+
+    console.log("");
+    console.log(
+      "Bootstrap administrator created.",
+    );
+    console.log(`Name:  ${admin.name}`);
+    console.log(`Email: ${admin.email}`);
+    console.log(`Role:  ${admin.role}`);
+    console.log("");
+    console.log(
+      "The password was securely hashed before storage.",
+    );
   }
 
-  const passwordHash =
-    await hashPassword(adminPassword);
+  /*
+   * -------------------------------------------------------
+   * 3. Ensure the administrator has an organization
+   *    membership
+   * -------------------------------------------------------
+   */
 
-  const admin =
-    await prisma.user.create({
+  const existingMembership =
+    await prisma.organizationMembership.findUnique(
+      {
+        where: {
+          organizationId_userId: {
+            organizationId:
+              DEFAULT_ORGANIZATION_ID,
+            userId: admin.id,
+          },
+        },
+      },
+    );
+
+  if (existingMembership) {
+    console.log("");
+    console.log(
+      "Administrator organization membership already exists.",
+    );
+    console.log(
+      `Membership role: ${existingMembership.role}`,
+    );
+  } else {
+    await prisma.organizationMembership.create({
       data: {
-        name: adminName,
-        email: adminEmail,
-        phone: adminPhone,
-        passwordHash,
+        organizationId:
+          DEFAULT_ORGANIZATION_ID,
+        userId: admin.id,
         role: "ADMIN",
-        isVerified: true,
       },
     });
 
+    console.log("");
+    console.log(
+      "Administrator organization membership created.",
+    );
+    console.log(
+      "Membership role: ADMIN",
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * 4. Ensure the administrator's global role remains
+   *    compatible with the bootstrap account.
+   *
+   *    We deliberately do not overwrite an existing
+   *    account's role here.
+   * -------------------------------------------------------
+   */
+
   console.log("");
-  console.log("Bootstrap administrator created.");
-  console.log(`Name:  ${admin.name}`);
-  console.log(`Email: ${admin.email}`);
-  console.log(`Role:  ${admin.role}`);
+  console.log("Bootstrap seed completed successfully.");
   console.log("");
   console.log(
-    "The password was securely hashed before storage.",
+    "No existing account password was changed.",
   );
   console.log(
-    "Future credential changes should be performed through the application.",
+    "No existing pharmacy data was deleted.",
+  );
+  console.log(
+    "No database reset was performed.",
   );
   console.log("");
 }
@@ -88,7 +194,7 @@ async function main() {
 main()
   .catch((error) => {
     console.error(
-      "Bootstrap admin seed failed:",
+      "PharmaTrack bootstrap seed failed:",
       error,
     );
     process.exitCode = 1;

@@ -1,738 +1,960 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-UserPlus,
-Search,
-Shield,
-Pencil,
-UserX,
-UserCheck,
-X,
-Save,
-Loader2,
-AlertCircle,
+  UserPlus,
+  Search,
+  Shield,
+  Pencil,
+  UserX,
+  UserCheck,
+  X,
+  Save,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  LockKeyhole,
 } from "lucide-react";
 
 import {
-apiDelete,
-apiGet,
-apiPost,
-apiPut,
+  apiDelete,
+  apiGet,
+  apiPost,
+  apiPut,
 } from "../services/api";
 
 type UserRole = "ADMIN" | "PHARMACIST" | "CLINICIAN";
 
 interface ManagedUser {
-id: string;
-name: string;
-email: string;
-phone?: string | null;
-role: UserRole;
-isVerified: boolean;
-createdAt?: string;
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  role: UserRole;
+  isVerified: boolean;
+  createdAt?: string;
 }
 
 interface UsersResponse {
-users?: ManagedUser[];
+  users?: ManagedUser[];
+  data?: ManagedUser[];
 }
 
 interface UserManagementProps {
-currentUserId: string;
+  currentUserId: string;
 }
 
 interface UserForm {
-name: string;
-email: string;
-phone: string;
-role: UserRole;
-password: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: UserRole;
+  password: string;
 }
 
 const roleLabels: Record<UserRole, string> = {
-ADMIN: "Admin",
-PHARMACIST: "Pharmacist",
-CLINICIAN: "Clinician",
+  ADMIN: "Admin",
+  PHARMACIST: "Pharmacist",
+  CLINICIAN: "Clinician",
 };
 
 const emptyForm: UserForm = {
-name: "",
-email: "",
-phone: "",
-role: "PHARMACIST",
-password: "",
+  name: "",
+  email: "",
+  phone: "",
+  role: "PHARMACIST",
+  password: "",
+};
+
+const MIN_PASSWORD_LENGTH = 12;
+const MAX_PASSWORD_LENGTH = 128;
+
+const isStrongPassword = (password: string): boolean => {
+  if (
+    password.length < MIN_PASSWORD_LENGTH ||
+    password.length > MAX_PASSWORD_LENGTH
+  ) {
+    return false;
+  }
+
+  return (
+    /[A-Z]/.test(password) &&
+    /[a-z]/.test(password) &&
+    /\d/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
+  );
+};
+
+const getPasswordValidationMessage = (
+  password: string,
+): string | null => {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Password must contain at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `Password cannot exceed ${MAX_PASSWORD_LENGTH} characters.`;
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return "Password must contain at least one uppercase letter.";
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return "Password must contain at least one lowercase letter.";
+  }
+
+  if (!/\d/.test(password)) {
+    return "Password must contain at least one number.";
+  }
+
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return "Password must contain at least one special character.";
+  }
+
+  return null;
+};
+
+const isValidEmail = (email: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 };
 
 export const UserManagement: React.FC<UserManagementProps> = ({
-currentUserId,
+  currentUserId,
 }) => {
-const [users, setUsers] = useState<ManagedUser[]>([]);
-const [searchTerm, setSearchTerm] = useState("");
-const [isLoading, setIsLoading] = useState(true);
-const [isSaving, setIsSaving] = useState(false);
-const [error, setError] = useState("");
-const [successMessage, setSuccessMessage] = useState("");
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
-const [isModalOpen, setIsModalOpen] = useState(false);
-const [editingUser, setEditingUser] =
-useState<ManagedUser | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingUser, setEditingUser] =
+    useState<ManagedUser | null>(null);
 
-const [form, setForm] = useState<UserForm>(emptyForm);
+  const [form, setForm] = useState<UserForm>(emptyForm);
 
-const loadUsers = async () => {
-try {
-setIsLoading(true);
-setError("");
+  const loadUsers = async () => {
+    try {
+      setIsLoading(true);
+      setError("");
 
+      const response = await apiGet<
+        UsersResponse | ManagedUser[]
+      >("/users");
 
-  const response = await apiGet<
-    UsersResponse | ManagedUser[]
-  >("/users");
+      const loadedUsers = Array.isArray(response)
+        ? response
+        : response.users ?? response.data ?? [];
 
-  const loadedUsers = Array.isArray(response)
-    ? response
-    : response.users ?? [];
+      setUsers(loadedUsers);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to load user accounts.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  setUsers(loadedUsers);
-} catch (requestError) {
-  setError(
-    requestError instanceof Error
-      ? requestError.message
-      : "Unable to load user accounts.",
-  );
-} finally {
-  setIsLoading(false);
-}
+  useEffect(() => {
+    void loadUsers();
+  }, []);
 
+  const openCreateModal = () => {
+    setEditingUser(null);
+    setForm({ ...emptyForm });
+    setError("");
+    setSuccessMessage("");
+    setIsModalOpen(true);
+  };
 
-};
+  const openEditModal = (user: ManagedUser) => {
+    setEditingUser(user);
 
-useEffect(() => {
-void loadUsers();
-}, []);
-
-const openCreateModal = () => {
-setEditingUser(null);
-setForm({ ...emptyForm });
-setError("");
-setSuccessMessage("");
-setIsModalOpen(true);
-};
-
-const openEditModal = (user: ManagedUser) => {
-setEditingUser(user);
-
-
-setForm({
-  name: user.name,
-  email: user.email,
-  phone: user.phone ?? "",
-  role: user.role,
-  password: "",
-});
-
-setError("");
-setSuccessMessage("");
-setIsModalOpen(true);
-
-
-};
-
-const closeModal = () => {
-if (isSaving) {
-return;
-}
-
-
-setIsModalOpen(false);
-setEditingUser(null);
-setForm({ ...emptyForm });
-
-
-};
-
-const handleFormChange = (
-field: keyof UserForm,
-value: string,
-) => {
-setForm((previous) => ({
-...previous,
-[field]:
-field === "role"
-? (value as UserRole)
-: value,
-}));
-};
-
-const handleSubmit = async (
-event: React.FormEvent<HTMLFormElement>,
-) => {
-event.preventDefault();
-
-
-setError("");
-setSuccessMessage("");
-setIsSaving(true);
-
-try {
-  const name = form.name.trim();
-  const email = form.email.trim().toLowerCase();
-  const phone = form.phone.trim();
-  const password = form.password;
-
-  if (!name) {
-    throw new Error("Full name is required.");
-  }
-
-  if (!email) {
-    throw new Error("Email address is required.");
-  }
-
-  if (!email.includes("@")) {
-    throw new Error(
-      "Please enter a valid email address.",
-    );
-  }
-
-  if (!editingUser && password.length < 8) {
-    throw new Error(
-      "Password must contain at least 8 characters.",
-    );
-  }
-
-  if (
-    editingUser &&
-    password.length > 0 &&
-    password.length < 8
-  ) {
-    throw new Error(
-      "New password must contain at least 8 characters.",
-    );
-  }
-
-  if (editingUser) {
-    await apiPut(`/users/${editingUser.id}`, {
-      name,
-      email,
-      phone: phone || undefined,
-      role: form.role,
+    setForm({
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? "",
+      role: user.role,
+      password: "",
     });
 
-    if (password) {
-      await apiPut(
-        `/users/${editingUser.id}/password`,
-        {
-          password,
-        },
-      );
+    setError("");
+    setSuccessMessage("");
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    if (isSaving) {
+      return;
     }
 
-    setSuccessMessage(
-      "User account updated successfully.",
+    setIsModalOpen(false);
+    setEditingUser(null);
+    setForm({ ...emptyForm });
+  };
+
+  const handleFormChange = (
+    field: keyof UserForm,
+    value: string,
+  ) => {
+    setForm((previous) => ({
+      ...previous,
+      [field]:
+        field === "role"
+          ? (value as UserRole)
+          : value,
+    }));
+  };
+
+  const handleSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+
+    setError("");
+    setSuccessMessage("");
+
+    const name = form.name.trim();
+    const email = form.email.trim().toLowerCase();
+    const phone = form.phone.trim();
+    const password = form.password;
+
+    if (!name) {
+      setError("Full name is required.");
+      return;
+    }
+
+    if (name.length < 2) {
+      setError("Full name must contain at least 2 characters.");
+      return;
+    }
+
+    if (!email) {
+      setError("Email address is required.");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    if (!editingUser && !password) {
+      setError("A password is required.");
+      return;
+    }
+
+    if (password) {
+      const passwordError =
+        getPasswordValidationMessage(password);
+
+      if (passwordError) {
+        setError(passwordError);
+        return;
+      }
+
+      if (!isStrongPassword(password)) {
+        setError(
+          "Password must contain uppercase, lowercase, number, and special character.",
+        );
+        return;
+      }
+    }
+
+    setIsSaving(true);
+
+    try {
+      if (editingUser) {
+        await apiPut(`/users/${editingUser.id}`, {
+          name,
+          email,
+          phone: phone || undefined,
+          role: form.role,
+        });
+
+        if (password) {
+          await apiPut(
+            `/users/${editingUser.id}/password`,
+            {
+              password,
+            },
+          );
+        }
+
+        setSuccessMessage(
+          "User account updated successfully.",
+        );
+      } else {
+        await apiPost("/users", {
+          name,
+          email,
+          phone: phone || undefined,
+          role: form.role,
+          password,
+        });
+
+        setSuccessMessage(
+          "User account created successfully.",
+        );
+      }
+
+      await loadUsers();
+
+      setIsModalOpen(false);
+      setEditingUser(null);
+      setForm({ ...emptyForm });
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to save the user account.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleToggleVerification = async (
+    user: ManagedUser,
+  ) => {
+    if (user.id === currentUserId) {
+      setError(
+        "You cannot disable your own administrator account.",
+      );
+      return;
+    }
+
+    const action = user.isVerified
+      ? "disable"
+      : "enable";
+
+    const confirmed = window.confirm(
+      user.isVerified
+        ? `Disable ${user.name}'s account? They will no longer be able to sign in.`
+        : `Enable ${user.name}'s account? They will be allowed to sign in again.`,
     );
-  } else {
-    await apiPost("/users", {
-      name,
-      email,
-      phone: phone || undefined,
-      role: form.role,
-      password,
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccessMessage("");
+
+      await apiPut(`/users/${user.id}`, {
+        isVerified: !user.isVerified,
+      });
+
+      await loadUsers();
+
+      setSuccessMessage(
+        action === "disable"
+          ? "User account has been disabled successfully."
+          : "User account has been enabled successfully.",
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to update the user account.",
+      );
+    }
+  };
+
+  const handleDelete = async (
+    user: ManagedUser,
+  ) => {
+    if (user.id === currentUserId) {
+      setError(
+        "You cannot remove your own administrator account.",
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Remove ${user.name} from this organization?\n\nTheir global account will be retained if they belong to another organization.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccessMessage("");
+
+      await apiDelete(`/users/${user.id}`);
+
+      setUsers((previous) =>
+        previous.filter(
+          (item) => item.id !== user.id,
+        ),
+      );
+
+      setSuccessMessage(
+        "User has been removed from this organization successfully.",
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to remove the user from this organization.",
+      );
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+
+    if (!query) {
+      return users;
+    }
+
+    return users.filter((user) => {
+      return (
+        user.name.toLowerCase().includes(query) ||
+        user.email.toLowerCase().includes(query) ||
+        roleLabels[user.role]
+          .toLowerCase()
+          .includes(query) ||
+        (user.phone ?? "")
+          .toLowerCase()
+          .includes(query)
+      );
     });
+  }, [users, searchTerm]);
 
-    setSuccessMessage(
-      "User account created successfully.",
-    );
-  }
-
-  await loadUsers();
-
-  setIsModalOpen(false);
-  setEditingUser(null);
-  setForm({ ...emptyForm });
-} catch (requestError) {
-  setError(
-    requestError instanceof Error
-      ? requestError.message
-      : "Unable to save the user account.",
-  );
-} finally {
-  setIsSaving(false);
-}
-
-
-};
-
-const handleToggleVerification = async (
-user: ManagedUser,
-) => {
-if (user.id === currentUserId) {
-setError(
-"You cannot deactivate your own administrator account.",
-);
-return;
-}
-
-
-try {
-  setError("");
-  setSuccessMessage("");
-
-  await apiPut(`/users/${user.id}`, {
-    isVerified: !user.isVerified,
-  });
-
-  await loadUsers();
-
-  setSuccessMessage(
-    user.isVerified
-      ? "User account has been deactivated."
-      : "User account has been activated.",
-  );
-} catch (requestError) {
-  setError(
-    requestError instanceof Error
-      ? requestError.message
-      : "Unable to update the user account.",
-  );
-}
-
-
-};
-
-const handleDelete = async (
-user: ManagedUser,
-) => {
-if (user.id === currentUserId) {
-setError(
-"You cannot delete your own administrator account.",
-);
-return;
-}
-
-
-const confirmed = window.confirm(
-  `Delete the account for ${user.name}? This action cannot be undone.`,
-);
-
-if (!confirmed) {
-  return;
-}
-
-try {
-  setError("");
-  setSuccessMessage("");
-
-  await apiDelete(`/users/${user.id}`);
-
-  setUsers((previous) =>
-    previous.filter(
-      (item) => item.id !== user.id,
-    ),
-  );
-
-  setSuccessMessage(
-    "User account deleted successfully.",
-  );
-} catch (requestError) {
-  setError(
-    requestError instanceof Error
-      ? requestError.message
-      : "Unable to delete the user account.",
-  );
-}
-
-
-};
-
-const filteredUsers = useMemo(() => {
-const query = searchTerm.trim().toLowerCase();
-
-if (!query) {
-  return users;
-}
-
-return users.filter((user) => {
   return (
-    user.name.toLowerCase().includes(query) ||
-    user.email.toLowerCase().includes(query) ||
-    roleLabels[user.role]
-      .toLowerCase()
-      .includes(query) ||
-    (user.phone ?? "")
-      .toLowerCase()
-      .includes(query)
-  );
-});
-
-
-}, [users, searchTerm]);
-
-return ( <section className="min-h-screen bg-slate-100 p-6"> <div className="mx-auto max-w-7xl space-y-6"> <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"> <div> <h1 className="text-2xl font-bold text-slate-900">
-User Management </h1>
-
-
-        <p className="mt-1 text-sm text-slate-500">
-          Create, update, activate, and manage
-          PharmaTrack user accounts.
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={openCreateModal}
-        className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662]"
-      >
-        <UserPlus className="h-4 w-4" />
-        Add User
-      </button>
-    </div>
-
-    {error && (
-      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-
-        <span>{error}</span>
-      </div>
-    )}
-
-    {successMessage && (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">
-        {successMessage}
-      </div>
-    )}
-
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 p-4">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-
-          <input
-            type="search"
-            placeholder="Search users..."
-            value={searchTerm}
-            onChange={(event) =>
-              setSearchTerm(event.target.value)
-            }
-            className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-[#22577A]"
-          />
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Loading user accounts...
-        </div>
-      ) : filteredUsers.length === 0 ? (
-        <div className="p-12 text-center text-sm text-slate-500">
-          No user accounts found.
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px] text-left">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-5 py-3">
-                  User
-                </th>
-
-                <th className="px-5 py-3">
-                  Role
-                </th>
-
-                <th className="px-5 py-3">
-                  Phone
-                </th>
-
-                <th className="px-5 py-3">
-                  Status
-                </th>
-
-                <th className="px-5 py-3 text-right">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-slate-100">
-              {filteredUsers.map((user) => (
-                <tr
-                  key={user.id}
-                  className="hover:bg-slate-50"
-                >
-                  <td className="px-5 py-4">
-                    <div className="font-semibold text-slate-900">
-                      {user.name}
-                    </div>
-
-                    <div className="text-xs text-slate-500">
-                      {user.email}
-                    </div>
-                  </td>
-
-                  <td className="px-5 py-4">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
-                      <Shield className="h-3.5 w-3.5" />
-
-                      {roleLabels[user.role]}
-                    </span>
-                  </td>
-
-                  <td className="px-5 py-4 text-sm text-slate-600">
-                    {user.phone || "—"}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
-                        user.isVerified
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-rose-100 text-rose-700"
-                      }`}
-                    >
-                      {user.isVerified
-                        ? "Active"
-                        : "Inactive"}
-                    </span>
-                  </td>
-
-                  <td className="px-5 py-4">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openEditModal(user)
-                        }
-                        className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-100"
-                        title="Edit user"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-
-                      {user.id !== currentUserId && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void handleToggleVerification(
-                                user,
-                              )
-                            }
-                            className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-100"
-                            title={
-                              user.isVerified
-                                ? "Deactivate user"
-                                : "Activate user"
-                            }
-                          >
-                            {user.isVerified ? (
-                              <UserX className="h-4 w-4" />
-                            ) : (
-                              <UserCheck className="h-4 w-4" />
-                            )}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void handleDelete(
-                                user,
-                              )
-                            }
-                            className="rounded-lg border border-rose-200 p-2 text-rose-600 hover:bg-rose-50"
-                            title="Delete user"
-                          >
-                            <UserX className="h-4 w-4" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  </div>
-
-  {isModalOpen && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 p-5">
+    <section className="min-h-screen bg-slate-100 p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-bold text-slate-900">
-              {editingUser
-                ? "Edit User Account"
-                : "Create User Account"}
-            </h2>
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#22577A] text-white shadow-sm">
+                <Shield className="h-5 w-5" />
+              </div>
 
-            <p className="mt-1 text-xs text-slate-500">
-              Manage account information and access
-              role.
-            </p>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  User Management
+                </h1>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Manage staff accounts and organization access.
+                </p>
+              </div>
+            </div>
           </div>
 
           <button
             type="button"
-            onClick={closeModal}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            onClick={openCreateModal}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662]"
           >
-            <X className="h-5 w-5" />
+            <UserPlus className="h-4 w-4" />
+            Add User
           </button>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-4 p-5"
-        >
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">
-              Full Name
-            </label>
+        {error && (
+          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
 
-            <input
-              type="text"
-              required
-              value={form.name}
-              onChange={(event) =>
-                handleFormChange(
-                  "name",
-                  event.target.value,
-                )
-              }
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A]"
-            />
+            <span>{error}</span>
           </div>
+        )}
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">
-              Email Address
-            </label>
+        {successMessage && (
+          <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
 
-            <input
-              type="email"
-              required
-              value={form.email}
-              onChange={(event) =>
-                handleFormChange(
-                  "email",
-                  event.target.value,
-                )
-              }
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A]"
-            />
+            <span>{successMessage}</span>
           </div>
+        )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Phone
-              </label>
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative max-w-md flex-1">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
 
-              <input
-                type="text"
-                value={form.phone}
-                onChange={(event) =>
-                  handleFormChange(
-                    "phone",
-                    event.target.value,
-                  )
-                }
-                className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A]"
-              />
-            </div>
+                <input
+                  type="search"
+                  placeholder="Search users by name, email, role, or phone..."
+                  value={searchTerm}
+                  onChange={(event) =>
+                    setSearchTerm(event.target.value)
+                  }
+                  className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                />
+              </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Role
-              </label>
-
-              <select
-                value={form.role}
-                onChange={(event) =>
-                  handleFormChange(
-                    "role",
-                    event.target.value,
-                  )
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[#22577A]"
-              >
-                <option value="PHARMACIST">
-                  Pharmacist
-                </option>
-
-                <option value="CLINICIAN">
-                  Clinician
-                </option>
-
-                <option value="ADMIN">
-                  Admin
-                </option>
-              </select>
+              <div className="text-xs font-medium text-slate-500">
+                {filteredUsers.length}{" "}
+                {filteredUsers.length === 1
+                  ? "user"
+                  : "users"}
+              </div>
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">
-              {editingUser
-                ? "New Password (optional)"
-                : "Password"}
-            </label>
+          {isLoading ? (
+            <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Loading user accounts...
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="p-12 text-center text-sm text-slate-500">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+                <Search className="h-5 w-5 text-slate-400" />
+              </div>
 
-            <input
-              type="password"
-              required={!editingUser}
-              minLength={8}
-              value={form.password}
-              onChange={(event) =>
-                handleFormChange(
-                  "password",
-                  event.target.value,
-                )
-              }
-              placeholder={
-                editingUser
-                  ? "Leave blank to keep current password"
-                  : "Minimum 8 characters"
-              }
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#22577A]"
-            />
+              <p className="font-semibold text-slate-700">
+                No user accounts found
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Try changing your search or add a new user.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-left">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3">
+                      User
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Organization Role
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Phone
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Account Status
+                    </th>
+
+                    <th className="px-5 py-3 text-right">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {filteredUsers.map((user) => (
+                    <tr
+                      key={user.id}
+                      className="transition-colors hover:bg-slate-50"
+                    >
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-slate-900">
+                          {user.name}
+                          {user.id === currentUserId && (
+                            <span className="ml-2 rounded-full bg-[#22577A]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#22577A]">
+                              You
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {user.email}
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
+                          <Shield className="h-3.5 w-3.5" />
+
+                          {roleLabels[user.role]}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4 text-sm text-slate-600">
+                        {user.phone || "—"}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
+                            user.isVerified
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              user.isVerified
+                                ? "bg-emerald-500"
+                                : "bg-rose-500"
+                            }`}
+                          />
+
+                          {user.isVerified
+                            ? "Enabled"
+                            : "Disabled"}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEditModal(user)
+                            }
+                            className="rounded-lg border border-slate-200 p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-[#22577A]"
+                            title="Edit user"
+                            aria-label={`Edit ${user.name}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          {user.id !== currentUserId && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleToggleVerification(
+                                    user,
+                                  )
+                                }
+                                className={`rounded-lg border p-2 transition-colors ${
+                                  user.isVerified
+                                    ? "border-amber-200 text-amber-600 hover:bg-amber-50"
+                                    : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                                }`}
+                                title={
+                                  user.isVerified
+                                    ? "Disable user account"
+                                    : "Enable user account"
+                                }
+                                aria-label={
+                                  user.isVerified
+                                    ? `Disable ${user.name}`
+                                    : `Enable ${user.name}`
+                                }
+                              >
+                                {user.isVerified ? (
+                                  <UserX className="h-4 w-4" />
+                                ) : (
+                                  <UserCheck className="h-4 w-4" />
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDelete(user)
+                                }
+                                className="rounded-lg border border-rose-200 p-2 text-rose-600 transition-colors hover:bg-rose-50"
+                                title="Remove from organization"
+                                aria-label={`Remove ${user.name} from organization`}
+                              >
+                                <UserX className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#22577A]/10 text-[#22577A]">
+                <Shield className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Organization Access
+                </p>
+
+                <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                  Role-based permissions
+                </p>
+              </div>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
-            <button
-              type="button"
-              onClick={closeModal}
-              disabled={isSaving}
-              className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Cancel
-            </button>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                <UserCheck className="h-4 w-4" />
+              </div>
 
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#1b4662] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSaving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Account Control
+                </p>
 
-              {editingUser
-                ? "Save Changes"
-                : "Create User"}
-            </button>
+                <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                  Enable or disable access
+                </p>
+              </div>
+            </div>
           </div>
-        </form>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <LockKeyhole className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Password Security
+                </p>
+
+                <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                  Strong password policy
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  )}
-</section>
 
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 p-5">
+              <div>
+                <h2 className="font-bold text-slate-900">
+                  {editingUser
+                    ? "Edit User Account"
+                    : "Create User Account"}
+                </h2>
 
-);
+                <p className="mt-1 text-xs text-slate-500">
+                  Manage account information and organization access.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={isSaving}
+                className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-4 p-5"
+            >
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Full Name
+                </label>
+
+                <input
+                  type="text"
+                  required
+                  minLength={2}
+                  value={form.name}
+                  onChange={(event) =>
+                    handleFormChange(
+                      "name",
+                      event.target.value,
+                    )
+                  }
+                  autoComplete="name"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Email Address
+                </label>
+
+                <input
+                  type="email"
+                  required
+                  value={form.email}
+                  onChange={(event) =>
+                    handleFormChange(
+                      "email",
+                      event.target.value,
+                    )
+                  }
+                  autoComplete="email"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Phone
+                  </label>
+
+                  <input
+                    type="tel"
+                    value={form.phone}
+                    onChange={(event) =>
+                      handleFormChange(
+                        "phone",
+                        event.target.value,
+                      )
+                    }
+                    autoComplete="tel"
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Organization Role
+                  </label>
+
+                  <select
+                    value={form.role}
+                    onChange={(event) =>
+                      handleFormChange(
+                        "role",
+                        event.target.value,
+                      )
+                    }
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                  >
+                    <option value="PHARMACIST">
+                      Pharmacist
+                    </option>
+
+                    <option value="CLINICIAN">
+                      Clinician
+                    </option>
+
+                    <option value="ADMIN">
+                      Admin
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  {editingUser
+                    ? "New Password (optional)"
+                    : "Password"}
+                </label>
+
+                <input
+                  type="password"
+                  required={!editingUser}
+                  minLength={MIN_PASSWORD_LENGTH}
+                  maxLength={MAX_PASSWORD_LENGTH}
+                  value={form.password}
+                  onChange={(event) =>
+                    handleFormChange(
+                      "password",
+                      event.target.value,
+                    )
+                  }
+                  autoComplete={
+                    editingUser
+                      ? "new-password"
+                      : "new-password"
+                  }
+                  placeholder={
+                    editingUser
+                      ? "Leave blank to keep current password"
+                      : "Enter a strong password"
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                />
+
+                <div className="mt-2 rounded-xl bg-slate-50 p-3">
+                  <p className="mb-2 text-xs font-semibold text-slate-600">
+                    Password requirements
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-1 text-xs text-slate-500 sm:grid-cols-2">
+                    <span>
+                      • 12–128 characters
+                    </span>
+
+                    <span>
+                      • Uppercase letter
+                    </span>
+
+                    <span>
+                      • Lowercase letter
+                    </span>
+
+                    <span>
+                      • Number
+                    </span>
+
+                    <span>
+                      • Special character
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="flex items-start gap-2">
+                  <Shield className="mt-0.5 h-4 w-4 shrink-0 text-[#22577A]" />
+
+                  <p>
+                    The selected role controls this user's
+                    access within the current organization.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  disabled={isSaving}
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#1b4662] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+
+                  {editingUser
+                    ? "Save Changes"
+                    : "Create User"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 };
 
 export default UserManagement;

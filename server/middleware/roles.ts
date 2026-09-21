@@ -6,6 +6,8 @@ export {
   requirePharmacist,
   requireClinician,
   requirePharmacyStaff,
+  requireOrganizationContext,
+  requireSuperAdmin,
 } from "./auth.js";
 
 export type {
@@ -13,6 +15,7 @@ export type {
 } from "./auth.js";
 
 export type AppRole =
+  | "SUPER_ADMIN"
   | "ADMIN"
   | "PHARMACIST"
   | "CLINICIAN";

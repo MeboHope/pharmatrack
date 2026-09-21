@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+
 import type {
   Drug,
   DispenseTransaction,
@@ -8,9 +9,14 @@ import type {
   Supplier,
   UserAccount,
 } from "../types";
+
 import { pharmacyDataService } from "../services/pharmacyData";
 
-type AppRole = "ADMIN" | "PHARMACIST" | "CLINICIAN";
+type AppRole =
+  | "SUPER_ADMIN"
+  | "ADMIN"
+  | "PHARMACIST"
+  | "CLINICIAN";
 
 export interface UsePharmacyDataResult {
   drugs: Drug[];
@@ -31,9 +37,18 @@ export interface UsePharmacyDataResult {
   refreshAdjustments: () => Promise<void>;
   refreshSettings: () => Promise<void>;
 
-  createDrug: (data: Partial<Drug>) => Promise<Drug>;
-  updateDrug: (id: string, data: Partial<Drug>) => Promise<Drug>;
-  deleteDrug: (id: string) => Promise<void>;
+  createDrug: (
+    data: Partial<Drug>,
+  ) => Promise<Drug>;
+
+  updateDrug: (
+    id: string,
+    data: Partial<Drug>,
+  ) => Promise<Drug>;
+
+  deleteDrug: (
+    id: string,
+  ) => Promise<void>;
 
   createPatient: (
     data: Partial<PatientRecord>,
@@ -44,7 +59,9 @@ export interface UsePharmacyDataResult {
     data: Partial<PatientRecord>,
   ) => Promise<PatientRecord>;
 
-  deletePatient: (id: string) => Promise<void>;
+  deletePatient: (
+    id: string,
+  ) => Promise<void>;
 
   createSupplier: (
     data: Partial<Supplier>,
@@ -55,7 +72,9 @@ export interface UsePharmacyDataResult {
     data: Partial<Supplier>,
   ) => Promise<Supplier>;
 
-  deleteSupplier: (id: string) => Promise<void>;
+  deleteSupplier: (
+    id: string,
+  ) => Promise<void>;
 
   createTransaction: (
     data: Partial<DispenseTransaction>,
@@ -90,9 +109,11 @@ const normalizeRole = (
 ): AppRole | null => {
   const normalized = String(role ?? "")
     .trim()
-    .toUpperCase();
+    .toUpperCase()
+    .replace(/\s+/g, "_");
 
   if (
+    normalized === "SUPER_ADMIN" ||
     normalized === "ADMIN" ||
     normalized === "PHARMACIST" ||
     normalized === "CLINICIAN"
@@ -103,23 +124,51 @@ const normalizeRole = (
   return null;
 };
 
+const isSuperAdmin = (
+  role: unknown,
+): boolean =>
+  normalizeRole(role) === "SUPER_ADMIN";
+
+/*
+ * Drug records are readable by every authenticated
+ * pharmacy role.
+ *
+ * Super Admin is intentionally excluded because this
+ * hook handles organization-scoped pharmacy data.
+ */
 const canAccessDrugs = (
   role: AppRole,
 ): boolean =>
   role === "ADMIN" ||
-  role === "PHARMACIST";
+  role === "PHARMACIST" ||
+  role === "CLINICIAN";
 
+/*
+ * Supplier information is restricted to pharmacy
+ * management staff.
+ */
 const canAccessSuppliers = (
   role: AppRole,
 ): boolean =>
   role === "ADMIN" ||
   role === "PHARMACIST";
 
+/*
+ * Stock adjustment history is readable by clinicians,
+ * while creation remains restricted by the backend to
+ * administrators and pharmacists.
+ */
 const canAccessAdjustments = (
   role: AppRole,
 ): boolean =>
   role === "ADMIN" ||
-  role === "PHARMACIST";
+  role === "PHARMACIST" ||
+  role === "CLINICIAN";
+
+const superAdminDataError = (): Error =>
+  new Error(
+    "Super Admin accounts do not use organization-scoped pharmacy data.",
+  );
 
 export function usePharmacyData(
   currentUser: UserAccount | null,
@@ -155,51 +204,81 @@ export function usePharmacyData(
 
   const refreshDrugs =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setDrugs([]);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getDrugs();
 
       setDrugs(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refreshPatients =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setPatients([]);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getPatients();
 
       setPatients(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refreshSuppliers =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setSuppliers([]);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getSuppliers();
 
       setSuppliers(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refreshTransactions =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setTransactions([]);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getTransactions();
 
       setTransactions(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refreshAdjustments =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setAdjustments([]);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getStockAdjustments();
 
       setAdjustments(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refreshSettings =
     useCallback(async () => {
+      if (isSuperAdmin(currentUser?.role)) {
+        setSettings(null);
+        return;
+      }
+
       const data =
         await pharmacyDataService.getSettings();
 
       setSettings(data);
-    }, []);
+    }, [currentUser?.role]);
 
   const refresh =
     useCallback(async () => {
@@ -222,6 +301,28 @@ export function usePharmacyData(
         setError(
           "Unable to determine the authenticated user's role.",
         );
+        setIsLoading(false);
+        return;
+      }
+
+      /*
+       * SUPER_ADMIN is a platform-wide account.
+       *
+       * It does not belong to a pharmacy/clinic
+       * organization, so it must never request
+       * organization-scoped pharmacy endpoints.
+       *
+       * Super Admin data is loaded by the dedicated
+       * Super Admin services/components instead.
+       */
+      if (role === "SUPER_ADMIN") {
+        setDrugs([]);
+        setPatients([]);
+        setSuppliers([]);
+        setTransactions([]);
+        setAdjustments([]);
+        setSettings(null);
+        setError(null);
         setIsLoading(false);
         return;
       }
@@ -307,6 +408,14 @@ export function usePharmacyData(
       async (
         data: Partial<Drug>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const created =
           await pharmacyDataService.createDrug(
             data,
@@ -316,7 +425,10 @@ export function usePharmacyData(
 
         return created;
       },
-      [refreshDrugs],
+      [
+        currentUser?.role,
+        refreshDrugs,
+      ],
     );
 
   const updateDrug =
@@ -325,6 +437,14 @@ export function usePharmacyData(
         id: string,
         data: Partial<Drug>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const updated =
           await pharmacyDataService.updateDrug(
             id,
@@ -335,19 +455,33 @@ export function usePharmacyData(
 
         return updated;
       },
-      [refreshDrugs],
+      [
+        currentUser?.role,
+        refreshDrugs,
+      ],
     );
 
   const deleteDrug =
     useCallback(
       async (id: string) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         await pharmacyDataService.deleteDrug(
           id,
         );
 
         await refreshDrugs();
       },
-      [refreshDrugs],
+      [
+        currentUser?.role,
+        refreshDrugs,
+      ],
     );
 
   const createPatient =
@@ -355,6 +489,14 @@ export function usePharmacyData(
       async (
         data: Partial<PatientRecord>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const created =
           await pharmacyDataService.createPatient(
             data,
@@ -364,7 +506,10 @@ export function usePharmacyData(
 
         return created;
       },
-      [refreshPatients],
+      [
+        currentUser?.role,
+        refreshPatients,
+      ],
     );
 
   const updatePatient =
@@ -373,6 +518,14 @@ export function usePharmacyData(
         id: string,
         data: Partial<PatientRecord>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const updated =
           await pharmacyDataService.updatePatient(
             id,
@@ -383,19 +536,33 @@ export function usePharmacyData(
 
         return updated;
       },
-      [refreshPatients],
+      [
+        currentUser?.role,
+        refreshPatients,
+      ],
     );
 
   const deletePatient =
     useCallback(
       async (id: string) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         await pharmacyDataService.deletePatient(
           id,
         );
 
         await refreshPatients();
       },
-      [refreshPatients],
+      [
+        currentUser?.role,
+        refreshPatients,
+      ],
     );
 
   const createSupplier =
@@ -403,6 +570,14 @@ export function usePharmacyData(
       async (
         data: Partial<Supplier>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const created =
           await pharmacyDataService.createSupplier(
             data,
@@ -412,7 +587,10 @@ export function usePharmacyData(
 
         return created;
       },
-      [refreshSuppliers],
+      [
+        currentUser?.role,
+        refreshSuppliers,
+      ],
     );
 
   const updateSupplier =
@@ -421,6 +599,14 @@ export function usePharmacyData(
         id: string,
         data: Partial<Supplier>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const updated =
           await pharmacyDataService.updateSupplier(
             id,
@@ -431,19 +617,33 @@ export function usePharmacyData(
 
         return updated;
       },
-      [refreshSuppliers],
+      [
+        currentUser?.role,
+        refreshSuppliers,
+      ],
     );
 
   const deleteSupplier =
     useCallback(
       async (id: string) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         await pharmacyDataService.deleteSupplier(
           id,
         );
 
         await refreshSuppliers();
       },
-      [refreshSuppliers],
+      [
+        currentUser?.role,
+        refreshSuppliers,
+      ],
     );
 
   const createTransaction =
@@ -451,6 +651,14 @@ export function usePharmacyData(
       async (
         data: Partial<DispenseTransaction>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const created =
           await pharmacyDataService.createTransaction(
             data,
@@ -486,6 +694,14 @@ export function usePharmacyData(
       async (
         data: Partial<StockAdjustment>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const created =
           await pharmacyDataService.createStockAdjustment(
             data,
@@ -522,6 +738,14 @@ export function usePharmacyData(
         invoiceNo?: string,
         buyingPrice?: number,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const updated =
           await pharmacyDataService.receiveStock(
             {
@@ -536,7 +760,10 @@ export function usePharmacyData(
 
         return updated;
       },
-      [refreshDrugs],
+      [
+        currentUser?.role,
+        refreshDrugs,
+      ],
     );
 
   const updateSettings =
@@ -544,6 +771,14 @@ export function usePharmacyData(
       async (
         data: Partial<PharmacySettings>,
       ) => {
+        if (
+          isSuperAdmin(
+            currentUser?.role,
+          )
+        ) {
+          throw superAdminDataError();
+        }
+
         const updated =
           await pharmacyDataService.updateSettings(
             data,
@@ -553,7 +788,7 @@ export function usePharmacyData(
 
         return updated;
       },
-      [],
+      [currentUser?.role],
     );
 
   return {

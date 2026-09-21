@@ -1,4 +1,4 @@
-
+import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 
 export interface CreateAuditLogInput {
@@ -8,6 +8,7 @@ export interface CreateAuditLogInput {
   details?: string;
   ipAddress?: string;
   userId?: string;
+  organizationId?: string;
 }
 
 export const auditService = {
@@ -15,12 +16,14 @@ export const auditService = {
     try {
       return await prisma.auditLog.create({
         data: {
+          id: randomUUID(),
           action: input.action,
           entity: input.entity,
           entityId: input.entityId,
           details: input.details,
           ipAddress: input.ipAddress,
           userId: input.userId,
+          organizationId: input.organizationId,
         },
       });
     } catch (error) {
@@ -41,6 +44,7 @@ export const auditService = {
     limit?: number;
     entity?: string;
     userId?: string;
+    organizationId?: string;
   }) {
     const limit = Math.min(
       Math.max(options?.limit ?? 100, 1),
@@ -51,14 +55,24 @@ export const auditService = {
       where: {
         entity: options?.entity,
         userId: options?.userId,
+        organizationId:
+          options?.organizationId,
       },
       include: {
-        user: {
+        User: {
           select: {
             id: true,
             name: true,
             email: true,
             role: true,
+          },
+        },
+        Organization: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            status: true,
           },
         },
       },
@@ -75,12 +89,20 @@ export const auditService = {
         id,
       },
       include: {
-        user: {
+        User: {
           select: {
             id: true,
             name: true,
             email: true,
             role: true,
+          },
+        },
+        Organization: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            status: true,
           },
         },
       },

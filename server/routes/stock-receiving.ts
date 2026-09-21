@@ -3,6 +3,7 @@ import { Router } from "express";
 import { prisma } from "../prisma";
 import {
   authenticate,
+  requireOrganizationContext,
   requireRole,
 } from "../middleware/auth";
 import { recordAudit } from "../middleware/audit";
@@ -10,44 +11,51 @@ import { recordAudit } from "../middleware/audit";
 const router = Router();
 
 router.use(authenticate);
+router.use(requireOrganizationContext);
 
 const pharmacistOnly = requireRole(
   "ADMIN",
   "PHARMACIST",
 );
 
+const getOrganizationId = (
+  organizationId: string | undefined,
+): string => {
+  if (!organizationId) {
+    throw new Error(
+      "Organization context is required.",
+    );
+  }
+
+  return organizationId;
+};
+
 /**
  * POST /api/stock-receiving
  *
  * Receives new stock for an existing drug.
  *
- * Body:
- * {
- *   drugId: string;
- *   qtyReceived: number;
- *   invoiceNo?: string;
- *   buyingPrice?: number;
- * }
- *
  * Only Admin and Pharmacist users may receive stock.
  *
- * The database is the source of truth.
+ * The drug must belong to the authenticated
+ * user's active organization.
  */
 router.post(
   "/",
   pharmacistOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        getOrganizationId(
+          request.auth?.organizationId,
+        );
+
       const {
         drugId,
         qtyReceived,
         invoiceNo,
         buyingPrice,
       } = request.body ?? {};
-
-      // -------------------------------------------------------
-      // AUTHENTICATION
-      // -------------------------------------------------------
 
       const userId =
         request.auth?.sub;
@@ -60,10 +68,6 @@ router.post(
         });
         return;
       }
-
-      // -------------------------------------------------------
-      // VALIDATION
-      // -------------------------------------------------------
 
       if (
         typeof drugId !== "string" ||
@@ -126,17 +130,14 @@ router.post(
           ? invoiceNo.trim()
           : "";
 
-      // -------------------------------------------------------
-      // ATOMIC DATABASE OPERATION
-      // -------------------------------------------------------
-
       const result =
         await prisma.$transaction(
           async (database) => {
             const existingDrug =
-              await database.drug.findUnique({
+              await database.drug.findFirst({
                 where: {
                   id: drugId.trim(),
+                  organizationId,
                 },
               });
 
@@ -210,18 +211,16 @@ router.post(
                 },
                 data: {
                   qty: newQty,
-
                   buyingPrice:
                     newBuyingPrice,
-
                   markupPercent:
                     Number(
                       markupPercent.toFixed(
                         2,
                       ),
                     ),
-
                   status,
+                  organizationId,
                 },
               });
 
@@ -232,10 +231,6 @@ router.post(
           },
         );
 
-      // -------------------------------------------------------
-      // AUDIT TRAIL
-      // -------------------------------------------------------
-
       await recordAudit(
         request,
         {
@@ -245,6 +240,7 @@ router.post(
             "Drug",
           entityId:
             result.updatedDrug.id,
+          organizationId,
           details: {
             drugId:
               result.updatedDrug.id,
@@ -276,10 +272,6 @@ router.post(
           },
         },
       );
-
-      // -------------------------------------------------------
-      // RESPONSE
-      // -------------------------------------------------------
 
       response.status(200).json({
         success: true,

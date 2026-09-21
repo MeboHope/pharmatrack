@@ -1,17 +1,32 @@
+
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "../prisma";
-import { authenticate } from "../middleware/auth";
 import {
-  requireAdmin,
-  requirePharmacist,
-} from "../middleware/roles";
+  authenticate,
+  requireOrganizationContext,
+  requireRole,
+} from "../middleware/auth";
 import { recordAudit } from "../middleware/audit";
 
 const router = Router();
 
 router.use(authenticate);
+router.use(requireOrganizationContext);
+
+const pharmacyStaff = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+  "CLINICIAN",
+);
+
+const pharmacistOnly = requireRole(
+  "ADMIN",
+  "PHARMACIST",
+);
+
+const adminOnly = requireRole("ADMIN");
 
 const parseDate = (
   value: unknown,
@@ -32,7 +47,7 @@ const parseDate = (
   return date;
 };
 
-const parsePositiveInteger = (
+const parseNonNegativeInteger = (
   value: unknown,
 ): number | undefined => {
   const number = Number(value);
@@ -67,7 +82,11 @@ const parseMoney = (
 const calculateStatus = (
   qty: number,
   expiryDate: Date,
-): "IN_STOCK" | "LOW_STOCK" | "EXPIRED" | "OUT_OF_STOCK" => {
+):
+  | "IN_STOCK"
+  | "LOW_STOCK"
+  | "EXPIRED"
+  | "OUT_OF_STOCK" => {
   const now = new Date();
 
   if (expiryDate < now) {
@@ -88,15 +107,35 @@ const calculateStatus = (
 /**
  * GET /api/drugs
  *
- * ADMIN + PHARMACIST
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * Returns drugs belonging ONLY to the authenticated
+ * user's active organization.
+ *
+ * Clinicians have read-only access.
  */
 router.get(
   "/",
-  requirePharmacist,
+  pharmacyStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const drugs =
         await prisma.drug.findMany({
+          where: {
+            organizationId,
+          },
           orderBy: {
             createdAt: "desc",
           },
@@ -115,17 +154,34 @@ router.get(
 /**
  * GET /api/drugs/:id
  *
- * ADMIN + PHARMACIST
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * The organization filter is part of the database query.
+ * A drug belonging to another organization therefore behaves
+ * as if it does not exist.
  */
 router.get(
   "/:id",
-  requirePharmacist,
+  pharmacyStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const drug =
-        await prisma.drug.findUnique({
+        await prisma.drug.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -151,12 +207,27 @@ router.get(
  * POST /api/drugs
  *
  * ADMIN + PHARMACIST
+ *
+ * The organizationId is taken from the authenticated
+ * organization context. It is NEVER accepted from the client.
  */
 router.post(
   "/",
-  requirePharmacist,
+  pharmacistOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const body =
         request.body ?? {};
 
@@ -264,9 +335,11 @@ router.post(
       }
 
       const parsedQty =
-        parsePositiveInteger(qty);
+        parseNonNegativeInteger(qty);
 
-      if (parsedQty === undefined) {
+      if (
+        parsedQty === undefined
+      ) {
         response.status(400).json({
           success: false,
           message:
@@ -331,10 +404,12 @@ router.post(
             name: name.trim(),
             genericName:
               genericName.trim(),
-            category: category.trim(),
+            category:
+              category.trim(),
             formulation:
               formulation.trim(),
-            batchNo: batchNo.trim(),
+            batchNo:
+              batchNo.trim(),
             manufactureDate:
               parsedManufactureDate,
             expiryDate:
@@ -353,10 +428,13 @@ router.post(
               parsedMarkup,
             status,
             notes:
-              typeof notes === "string" &&
+              typeof notes ===
+                "string" &&
               notes.trim()
                 ? notes.trim()
                 : null,
+
+            organizationId,
           },
         });
 
@@ -382,7 +460,9 @@ router.post(
         error instanceof
         Prisma.PrismaClientKnownRequestError
       ) {
-        if (error.code === "P2002") {
+        if (
+          error.code === "P2002"
+        ) {
           response.status(409).json({
             success: false,
             message:
@@ -401,16 +481,32 @@ router.post(
  * PUT /api/drugs/:id
  *
  * ADMIN + PHARMACIST
+ *
+ * Existing drug lookup and update are both restricted
+ * to the authenticated organization.
  */
 router.put(
   "/:id",
-  requirePharmacist,
+  pharmacistOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const existing =
-        await prisma.drug.findUnique({
+        await prisma.drug.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -498,7 +594,8 @@ router.put(
 
       if (body.notes !== undefined) {
         data.notes =
-          typeof body.notes === "string" &&
+          typeof body.notes ===
+            "string" &&
           body.notes.trim()
             ? body.notes.trim()
             : null;
@@ -558,7 +655,7 @@ router.put(
 
       if (body.qty !== undefined) {
         const qty =
-          parsePositiveInteger(
+          parseNonNegativeInteger(
             body.qty,
           );
 
@@ -596,10 +693,8 @@ router.put(
           return;
         }
 
-        nextBuyingPrice =
-          price;
-        data.buyingPrice =
-          price;
+        nextBuyingPrice = price;
+        data.buyingPrice = price;
       }
 
       let nextSellingPrice =
@@ -623,10 +718,8 @@ router.put(
           return;
         }
 
-        nextSellingPrice =
-          price;
-        data.sellingPrice =
-          price;
+        nextSellingPrice = price;
+        data.sellingPrice = price;
       }
 
       if (
@@ -672,7 +765,7 @@ router.put(
       const drug =
         await prisma.drug.update({
           where: {
-            id: request.params.id,
+            id: existing.id,
           },
           data,
         });
@@ -699,7 +792,9 @@ router.put(
         error instanceof
         Prisma.PrismaClientKnownRequestError
       ) {
-        if (error.code === "P2002") {
+        if (
+          error.code === "P2002"
+        ) {
           response.status(409).json({
             success: false,
             message:
@@ -708,10 +803,13 @@ router.put(
           return;
         }
 
-        if (error.code === "P2025") {
+        if (
+          error.code === "P2025"
+        ) {
           response.status(404).json({
             success: false,
-            message: "Drug not found.",
+            message:
+              "Drug not found.",
           });
           return;
         }
@@ -726,16 +824,31 @@ router.put(
  * DELETE /api/drugs/:id
  *
  * ADMIN ONLY
+ *
+ * The drug must belong to the authenticated organization.
  */
 router.delete(
   "/:id",
-  requireAdmin,
+  adminOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const existing =
-        await prisma.drug.findUnique({
+        await prisma.drug.findFirst({
           where: {
             id: request.params.id,
+            organizationId,
           },
         });
 
@@ -749,7 +862,7 @@ router.delete(
 
       await prisma.drug.delete({
         where: {
-          id: request.params.id,
+          id: existing.id,
         },
       });
 
@@ -758,13 +871,10 @@ router.delete(
         {
           action: "DELETE",
           entity: "Drug",
-          entityId:
-            existing.id,
+          entityId: existing.id,
           details: {
-            code:
-              existing.code,
-            name:
-              existing.name,
+            code: existing.code,
+            name: existing.name,
           },
         },
       );
@@ -779,7 +889,9 @@ router.delete(
         error instanceof
         Prisma.PrismaClientKnownRequestError
       ) {
-        if (error.code === "P2003") {
+        if (
+          error.code === "P2003"
+        ) {
           response.status(409).json({
             success: false,
             message:
@@ -788,10 +900,13 @@ router.delete(
           return;
         }
 
-        if (error.code === "P2025") {
+        if (
+          error.code === "P2025"
+        ) {
           response.status(404).json({
             success: false,
-            message: "Drug not found.",
+            message:
+              "Drug not found.",
           });
           return;
         }

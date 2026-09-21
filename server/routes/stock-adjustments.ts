@@ -1,9 +1,10 @@
-
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 
 import { prisma } from "../prisma";
 import {
   authenticate,
+  requireOrganizationContext,
   requireRole,
 } from "../middleware/auth";
 import { recordAudit } from "../middleware/audit";
@@ -11,6 +12,7 @@ import { recordAudit } from "../middleware/audit";
 const router = Router();
 
 router.use(authenticate);
+router.use(requireOrganizationContext);
 
 const pharmacyStaff = requireRole(
   "ADMIN",
@@ -23,29 +25,35 @@ const pharmacistOnly = requireRole(
   "PHARMACIST",
 );
 
-const adjustmentTypes = [
-  "LOSS_DAMAGE",
-  "EXPIRY_REMOVAL",
-  "AUDIT_RECONCILIATION",
-  "RETURN_TO_SUPPLIER",
-] as const;
-
+/**
+ * GET /api/stock-adjustments
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ *
+ * Only stock adjustments belonging to the
+ * authenticated organization are returned.
+ */
 router.get(
   "/",
   pharmacyStaff,
-  async (_request, response, next) => {
+  async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const adjustments =
         await prisma.stockAdjustment.findMany({
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-              },
-            },
+          where: {
+            organizationId,
           },
           orderBy: {
             date: "desc",
@@ -62,25 +70,33 @@ router.get(
   },
 );
 
+/**
+ * GET /api/stock-adjustments/:id
+ *
+ * ADMIN + PHARMACIST + CLINICIAN
+ */
 router.get(
   "/:id",
   pharmacyStaff,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
       const adjustment =
-        await prisma.stockAdjustment.findUnique({
+        await prisma.stockAdjustment.findFirst({
           where: {
             id: request.params.id,
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-              },
-            },
+            organizationId,
           },
         });
 
@@ -103,17 +119,56 @@ router.get(
   },
 );
 
+/**
+ * POST /api/stock-adjustments
+ *
+ * ADMIN + PHARMACIST
+ *
+ * The selected drug must belong to the current
+ * organization.
+ */
 router.post(
   "/",
   pharmacistOnly,
   async (request, response, next) => {
     try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      const authenticatedUserId =
+        request.auth?.userId;
+
+      if (!organizationId) {
+        response.status(403).json({
+          success: false,
+          message:
+            "An active organization context is required.",
+        });
+        return;
+      }
+
+      if (!authenticatedUserId) {
+        response.status(401).json({
+          success: false,
+          message:
+            "Authenticated user information is required.",
+        });
+        return;
+      }
+
+      const body =
+        request.body ?? {};
+
       const {
+        id,
         drugId,
-        adjustedQty,
         type,
         reason,
-      } = request.body ?? {};
+        adjustedQty,
+        quantity,
+        adjustedBy,
+        date,
+      } = body;
 
       if (
         typeof drugId !== "string" ||
@@ -127,44 +182,22 @@ router.post(
         return;
       }
 
-      if (
-        adjustedQty === undefined ||
-        adjustedQty === null ||
-        adjustedQty === ""
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Adjusted quantity is required.",
-        });
-        return;
-      }
-
-      const newQty =
-        Number(adjustedQty);
+      const validAdjustmentTypes = [
+        "LOSS_DAMAGE",
+        "EXPIRY_REMOVAL",
+        "AUDIT_RECONCILIATION",
+        "RETURN_TO_SUPPLIER",
+      ] as const;
 
       if (
-        !Number.isInteger(newQty) ||
-        newQty < 0
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Adjusted quantity must be a non-negative whole number.",
-        });
-        return;
-      }
-
-      if (
-        typeof type !== "string" ||
-        !adjustmentTypes.includes(
-          type as (typeof adjustmentTypes)[number],
+        !validAdjustmentTypes.includes(
+          type,
         )
       ) {
         response.status(400).json({
           success: false,
           message:
-            "A valid stock adjustment type is required.",
+            "Invalid stock adjustment type.",
         });
         return;
       }
@@ -176,144 +209,279 @@ router.post(
         response.status(400).json({
           success: false,
           message:
-            "A reason for the stock adjustment is required.",
+            "A reason for the adjustment is required.",
         });
         return;
       }
 
-      const userId =
-        request.auth?.sub;
+      const requestedAdjustedQty =
+        adjustedQty !== undefined
+          ? adjustedQty
+          : quantity;
 
-      if (!userId) {
-        response.status(401).json({
+      const parsedAdjustedQty =
+        Number(
+          requestedAdjustedQty,
+        );
+
+      if (
+        !Number.isInteger(
+          parsedAdjustedQty,
+        ) ||
+        parsedAdjustedQty < 0
+      ) {
+        response.status(400).json({
           success: false,
           message:
-            "Authentication required.",
+            "Adjusted quantity must be a non-negative whole number.",
+        });
+        return;
+      }
+
+      const adjustmentDate =
+        date !== undefined
+          ? new Date(date)
+          : new Date();
+
+      if (
+        Number.isNaN(
+          adjustmentDate.getTime(),
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Invalid adjustment date.",
         });
         return;
       }
 
       const result =
         await prisma.$transaction(
-          async (database) => {
+          async (tx) => {
+            /**
+             * IMPORTANT:
+             * The drug lookup is organization-scoped.
+             * A user cannot adjust stock belonging to
+             * another pharmacy or clinic.
+             */
             const drug =
-              await database.drug.findUnique({
+              await tx.drug.findFirst({
                 where: {
                   id: drugId.trim(),
+                  organizationId,
                 },
               });
 
             if (!drug) {
               throw new Error(
-                "Drug not found.",
+                "DRUG_NOT_FOUND",
               );
             }
 
-            const user =
-              await database.user.findUnique({
-                where: {
-                  id: userId,
+            /**
+             * Confirm the authenticated user is a member
+             * of this organization.
+             */
+            const membership =
+              await tx.organizationMembership.findFirst(
+                {
+                  where: {
+                    organizationId,
+                    userId:
+                      authenticatedUserId,
+                  },
+                  select: {
+                    id: true,
+                  },
                 },
-              });
+              );
 
-            if (!user) {
+            if (!membership) {
               throw new Error(
-                "Authenticated user could not be found.",
+                "USER_NOT_IN_ORGANIZATION",
               );
             }
 
             const previousQty =
               drug.qty;
 
-            const newStatus =
-              newQty === 0
-                ? "OUT_OF_STOCK"
-                : newQty <= 10
-                  ? "LOW_STOCK"
-                  : "IN_STOCK";
-
-            await database.drug.update({
-              where: {
-                id: drug.id,
-              },
-              data: {
-                qty: newQty,
-                status: newStatus,
-              },
-            });
+            /**
+             * adjustedQty represents the resulting stock
+             * quantity after the adjustment.
+             */
+            const updatedDrug =
+              await tx.drug.update({
+                where: {
+                  id: drug.id,
+                },
+                data: {
+                  qty:
+                    parsedAdjustedQty,
+                  status:
+                    calculateDrugStatus(
+                      parsedAdjustedQty,
+                      drug.expiryDate,
+                    ),
+                },
+              });
 
             const adjustment =
-              await database.stockAdjustment.create(
+              await tx.stockAdjustment.create(
                 {
                   data: {
+                    id:
+                      typeof id ===
+                          "string" &&
+                      id.trim()
+                        ? id.trim()
+                        : undefined,
+                    date:
+                      adjustmentDate,
                     drugId:
                       drug.id,
-
                     drugName:
                       drug.name,
-
                     batchNo:
                       drug.batchNo,
-
                     previousQty,
-
                     adjustedQty:
-                      newQty,
-
-                    type:
-                      type as (typeof adjustmentTypes)[number],
-
+                      parsedAdjustedQty,
+                    type,
                     reason:
                       reason.trim(),
-
                     adjustedBy:
-                      user.name,
-
-                    userId,
+                      typeof adjustedBy ===
+                          "string" &&
+                      adjustedBy.trim()
+                        ? adjustedBy.trim()
+                        : authenticatedUserId,
+                    userId:
+                      authenticatedUserId,
+                    organizationId,
                   },
                 },
               );
 
-            return adjustment;
+            return {
+              adjustment,
+              drug: updatedDrug,
+            };
           },
         );
 
       await recordAudit(
         request,
         {
-          action:
-            "STOCK_ADJUSTMENT_CREATED",
+          action: "CREATE",
           entity:
             "StockAdjustment",
           entityId:
-            result.id,
+            result.adjustment.id,
           details: {
             drugId:
-              result.drugId,
+              result.adjustment.drugId,
             drugName:
-              result.drugName,
-            batchNo:
-              result.batchNo,
+              result.adjustment.drugName,
             previousQty:
-              result.previousQty,
+              result.adjustment.previousQty,
             adjustedQty:
-              result.adjustedQty,
+              result.adjustment.adjustedQty,
             type:
-              result.type,
-            reason:
-              result.reason,
+              result.adjustment.type,
           },
         },
       );
 
       response.status(201).json({
         success: true,
-        data: result,
+        data: result.adjustment,
+        drug: result.drug,
       });
     } catch (error) {
+      if (
+        error instanceof Error
+      ) {
+        if (
+          error.message ===
+          "DRUG_NOT_FOUND"
+        ) {
+          response.status(404).json({
+            success: false,
+            message:
+              "Drug not found in the current organization.",
+          });
+          return;
+        }
+
+        if (
+          error.message ===
+          "USER_NOT_IN_ORGANIZATION"
+        ) {
+          response.status(403).json({
+            success: false,
+            message:
+              "The authenticated user does not belong to this organization.",
+          });
+          return;
+        }
+      }
+
+      if (
+        error instanceof
+        Prisma.PrismaClientKnownRequestError
+      ) {
+        if (
+          error.code === "P2002"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "A stock adjustment with this identifier already exists.",
+          });
+          return;
+        }
+
+        if (
+          error.code === "P2025"
+        ) {
+          response.status(404).json({
+            success: false,
+            message:
+              "The referenced record could not be found.",
+          });
+          return;
+        }
+      }
+
       next(error);
     }
   },
 );
+
+function calculateDrugStatus(
+  qty: number,
+  expiryDate: Date,
+):
+  | "IN_STOCK"
+  | "LOW_STOCK"
+  | "EXPIRED"
+  | "OUT_OF_STOCK" {
+  const now = new Date();
+
+  if (expiryDate < now) {
+    return "EXPIRED";
+  }
+
+  if (qty <= 0) {
+    return "OUT_OF_STOCK";
+  }
+
+  if (qty <= 10) {
+    return "LOW_STOCK";
+  }
+
+  return "IN_STOCK";
+}
 
 export default router;

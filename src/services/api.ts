@@ -248,6 +248,15 @@ const saveAccessToken = (
   );
 };
 
+const saveRefreshToken = (
+  token: string,
+): void => {
+  localStorage.setItem(
+    REFRESH_TOKEN_KEY,
+    token,
+  );
+};
+
 const clearAuthentication = (): void => {
   localStorage.removeItem(
     ACCESS_TOKEN_KEY,
@@ -350,6 +359,12 @@ const refreshAccessToken =
             ? data.accessToken
             : null;
 
+        const newRefreshToken =
+          typeof data.refreshToken ===
+          "string"
+            ? data.refreshToken
+            : null;
+
         if (!accessToken) {
           clearAuthentication();
 
@@ -359,8 +374,27 @@ const refreshAccessToken =
           );
         }
 
+        /*
+         * The backend uses refresh-token
+         * rotation. Therefore an automatic
+         * refresh must save BOTH newly issued
+         * credentials.
+         */
+        if (!newRefreshToken) {
+          clearAuthentication();
+
+          throw new ApiError(
+            "The server did not return a rotated refresh token.",
+            401,
+          );
+        }
+
         saveAccessToken(
           accessToken,
+        );
+
+        saveRefreshToken(
+          newRefreshToken,
         );
 
         return accessToken;
@@ -556,7 +590,8 @@ const requestRaw = async (
     !skipRefresh &&
     path !== "/auth/login" &&
     path !== "/auth/register" &&
-    path !== "/auth/refresh"
+    path !== "/auth/refresh" &&
+    path !== "/auth/logout"
   ) {
     try {
       const newToken =

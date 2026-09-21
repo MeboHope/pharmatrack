@@ -1,72 +1,56 @@
+import rateLimit from "express-rate-limit";
 
-import { rateLimit } from "express-rate-limit";
-
-/**
- * Authentication rate limiter.
- *
- * Protects login/register/password-reset endpoints
- * from excessive repeated requests.
- *
- * Skips rate limiting for localhost/127.0.0.1 during development.
- */
-export const authRateLimiter = rateLimit({
+export const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-
-  // Allow 10 authentication attempts per IP
-  // within the 15-minute window.
   limit: 10,
-
-  // Skip rate limiting for localhost in development
-  skip: (req) => {
-    const isLocalhost = 
-      req.ip === '127.0.0.1' || 
-      req.ip === '::1' ||
-      req.ip === 'localhost' ||
-      process.env.NODE_ENV !== 'production';
-    return isLocalhost;
-  },
-
   standardHeaders: "draft-8",
   legacyHeaders: false,
-
   message: {
     success: false,
     message:
-      "Too many authentication attempts. Please try again later.",
+      "Too many login attempts. Please wait 15 minutes and try again.",
   },
+});
 
-  statusCode: 429,
+export const registrationRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message:
+      "Too many registration attempts. Please try again later.",
+  },
+});
 
-  handler: (_request, response) => {
-    response.status(429).json({
-      success: false,
-      message:
-        "Too many authentication attempts. Please try again later.",
-    });
+export const refreshRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message:
+      "Too many token refresh attempts. Please try again later.",
   },
 });
 
 /**
- * General API limiter.
+ * General protection for the API.
  *
- * This is intentionally more generous than the
- * authentication limiter.
+ * Authentication routes have their own more specific
+ * rate limiters, so this limiter acts as an additional
+ * broad protection layer.
  */
 export const generalApiRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-
   limit: 300,
-
   standardHeaders: "draft-8",
   legacyHeaders: false,
-
   message: {
     success: false,
     message:
-      "Too many requests. Please try again later.",
+      "Too many API requests. Please slow down and try again later.",
   },
-
-  statusCode: 429,
 });
-
-export default authRateLimiter;
