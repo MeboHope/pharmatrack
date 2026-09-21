@@ -237,7 +237,7 @@ router.post(
         request.auth?.organizationId;
 
       const authenticatedUserId =
-        request.auth?.userId;
+  request.auth?.sub;
 
       if (!organizationId) {
         response.status(403).json({
