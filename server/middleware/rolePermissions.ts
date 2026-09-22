@@ -7,7 +7,7 @@ import type {
 import {
   requireAuth,
   requireRole,
-} from "./auth";
+} from "./auth.js";
 
 /**
  * Reusable permission definitions for PharmaTrack.

@@ -4,20 +4,20 @@ import {
   authenticate,
   requireOrganizationContext,
   type AuthenticatedRequest,
-} from "../middleware/auth";
+} from "../middleware/auth.js";
 
-import { requireAdmin } from "../middleware/roles";
+import { requireAdmin } from "../middleware/roles.js";
 
-import { recordAudit } from "../middleware/audit";
+import { recordAudit } from "../middleware/audit.js";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 
 import {
   authService,
   hashPassword,
   isStrongPassword,
   isValidEmail,
-} from "../services/auth";
+} from "../services/auth.js";
 
 const router = Router();
 

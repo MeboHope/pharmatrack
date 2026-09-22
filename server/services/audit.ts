@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 
 export interface CreateAuditLogInput {
   action: string;

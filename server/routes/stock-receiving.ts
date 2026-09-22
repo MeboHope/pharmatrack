@@ -1,12 +1,12 @@
 import { Router } from "express";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 import {
   authenticate,
   requireOrganizationContext,
   requireRole,
-} from "../middleware/auth";
-import { recordAudit } from "../middleware/audit";
+} from "../middleware/auth.js";
+import { recordAudit } from "../middleware/audit.js";
 
 const router = Router();
 

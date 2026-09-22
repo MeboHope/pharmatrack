@@ -4,7 +4,7 @@ import type {
   Response,
 } from "express";
 
-import type { JwtPayload } from "../services/auth";
+import type { JwtPayload } from "../services/auth.js";
 
 export type UserRole = JwtPayload["role"];
 

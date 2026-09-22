@@ -8,9 +8,9 @@ import {
   authService,
   type JwtPayload,
   type AppRole,
-} from "../services/auth";
+} from "../services/auth.js";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 
 declare global {
   namespace Express {

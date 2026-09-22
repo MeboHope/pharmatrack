@@ -1,5 +1,5 @@
 export {
   requireRole,
-} from "./auth";
+} from "./auth.js";
 
 export default requireRole;

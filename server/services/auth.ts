@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 
 import {
   isStrongPassword,
   isValidEmail,
   isEmailDomainConfigured,
-} from "../middleware/security";
+} from "../middleware/security.js";
 
 export {
   isStrongPassword,

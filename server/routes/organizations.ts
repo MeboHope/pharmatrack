@@ -3,15 +3,15 @@ import { Router } from "express";
 import {
   authenticate,
   type AuthenticatedRequest,
-} from "../middleware/auth";
+} from "../middleware/auth.js";
 
 import {
   authService,
-} from "../services/auth";
+} from "../services/auth.js";
 
 import {
   recordAudit,
-} from "../middleware/audit";
+} from "../middleware/audit.js";
 
 const router = Router();
 

@@ -2,8 +2,8 @@ import "dotenv/config";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { prisma } from "../prisma";
-import { hashPassword } from "../services/auth";
+import { prisma } from "../prisma.js";
+import { hashPassword } from "../services/auth.js";
 
 const rl = readline.createInterface({
   input,

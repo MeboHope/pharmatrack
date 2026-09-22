@@ -1,7 +1,7 @@
 import {
   requireAuth,
   requireRole,
-} from "../routes/auth";
+} from "../routes/auth.js";
 
 export {
   requireAuth,

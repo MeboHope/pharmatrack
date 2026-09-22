@@ -4,12 +4,12 @@ import {
   type Response,
 } from "express";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 import {
   requireAuth,
   requireOrganizationContext,
   requireRole,
-} from "../middleware/auth";
+} from "../middleware/auth.js";
 
 const router = Router();
 

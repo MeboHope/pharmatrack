@@ -1,26 +1,26 @@
 import { Router } from "express";
 
-import { authService } from "../services/auth";
+import { authService } from "../services/auth.js";
 
 import {
   authenticate,
   type AuthenticatedRequest,
-} from "../middleware/auth";
+} from "../middleware/auth.js";
 
-import { recordAudit } from "../middleware/audit";
+import { recordAudit } from "../middleware/audit.js";
 
 import {
   isStrongPassword,
   isValidEmail,
-} from "../middleware/security";
+} from "../middleware/security.js";
 
 import {
   loginRateLimiter,
   registrationRateLimiter,
   refreshRateLimiter,
-} from "../middleware/rateLimit";
+} from "../middleware/rateLimit.js";
 
-import { prisma } from "../prisma";
+import { prisma } from "../prisma.js";
 
 const router = Router();
 
