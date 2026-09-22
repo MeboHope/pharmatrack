@@ -44,54 +44,47 @@ interface NavigationItem {
   }>;
 }
 
-const primaryNavigation: NavigationItem[] =
-  [
-    {
-      id: "dashboard",
-      label: "Dashboard",
-      description: "Platform overview",
-      icon: LayoutDashboard,
-    },
-    {
-      id: "organizations",
-      label: "Organizations",
-      description:
-        "Pharmacies and clinics",
-      icon: Building2,
-    },
-    {
-      id: "users",
-      label: "Platform Users",
-      description:
-        "Global user directory",
-      icon: Users,
-    },
-  ];
+const primaryNavigation: NavigationItem[] = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    description: "Platform overview",
+    icon: LayoutDashboard,
+  },
+  {
+    id: "organizations",
+    label: "Organizations",
+    description: "Pharmacies and clinics",
+    icon: Building2,
+  },
+  {
+    id: "users",
+    label: "Platform Users",
+    description: "Global user directory",
+    icon: Users,
+  },
+];
 
-const managementNavigation: NavigationItem[] =
-  [
-    {
-      id: "audit-logs",
-      label: "Audit Logs",
-      description:
-        "Platform activity",
-      icon: ClipboardList,
-    },
-    {
-      id: "system-status",
-      label: "System Status",
-      description:
-        "Platform health",
-      icon: Activity,
-    },
-    {
-      id: "settings",
-      label: "Platform Settings",
-      description:
-        "System configuration",
-      icon: Settings,
-    },
-  ];
+const managementNavigation: NavigationItem[] = [
+  {
+    id: "audit-logs",
+    label: "Audit Logs",
+    description: "Platform activity",
+    icon: ClipboardList,
+  },
+  {
+    id: "system-status",
+    label: "System Status",
+    description: "Platform health",
+    icon: Activity,
+  },
+  {
+    id: "settings",
+    label: "Platform Settings",
+    description: "System configuration",
+    icon: Settings,
+  },
+];
 
 export function SuperAdminSidebar({
   activeSection,
@@ -196,32 +189,32 @@ export function SuperAdminSidebar({
           ].join(" ")}
         >
           <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl">
-  <img
-    src="/logo/logo.png"
-    alt="PharmaTrack"
-    className="h-full w-full object-contain"
-    onError={(event) => {
-      event.currentTarget.style.display =
-        "none";
+            <img
+              src="/logo/logo.png"
+              alt="PharmaTrack"
+              className="h-full w-full object-contain"
+              onError={(event) => {
+                event.currentTarget.style.display =
+                  "none";
 
-      const fallback =
-        event.currentTarget
-          .nextElementSibling;
+                const fallback =
+                  event.currentTarget
+                    .nextElementSibling;
 
-      if (fallback) {
-        fallback.classList.remove(
-          "hidden",
-        );
-      }
-    }}
-  />
+                if (fallback) {
+                  fallback.classList.remove(
+                    "hidden",
+                  );
+                }
+              }}
+            />
 
-  <ShieldCheck
-    size={25}
-    strokeWidth={2.1}
-    className="hidden text-white"
-  />
-</div>
+            <ShieldCheck
+              size={25}
+              strokeWidth={2.1}
+              className="hidden text-white"
+            />
+          </div>
 
           {!isCollapsed && (
             <div className="min-w-0">
@@ -309,13 +302,15 @@ export function SuperAdminSidebar({
               : undefined
           }
           className={[
-            "group flex w-full items-center rounded-xl text-left text-slate-200 transition-colors hover:bg-red-500/10 hover:text-red-100",
+            "group flex w-full items-center rounded-xl text-left text-white transition-colors",
+            "border border-white/10 bg-[#1B4865] shadow-sm",
+            "hover:bg-[#163A52] hover:text-white",
             isCollapsed
               ? "justify-center px-3 py-3"
               : "gap-3 px-3 py-3",
           ].join(" ")}
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-300 group-hover:text-red-200">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-white transition-colors group-hover:bg-white/10">
             <LogOut
               size={18}
               strokeWidth={1.9}
@@ -328,7 +323,7 @@ export function SuperAdminSidebar({
                 Sign out
               </span>
 
-              <span className="block text-[11px] text-slate-400 group-hover:text-red-200/80">
+              <span className="block text-[11px] text-white/60 group-hover:text-white/75">
                 End platform session
               </span>
             </span>

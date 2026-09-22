@@ -11,9 +11,12 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
-  LockKeyhole,
+  Mail,
+  RotateCw,
+  Ban,
+  Clock3,
+  Users,
 } from "lucide-react";
-
 import {
   apiDelete,
   apiGet,
@@ -22,6 +25,12 @@ import {
 } from "../services/api";
 
 type UserRole = "ADMIN" | "PHARMACIST" | "CLINICIAN";
+
+type InvitationStatus =
+  | "PENDING"
+  | "ACCEPTED"
+  | "REVOKED"
+  | "EXPIRED";
 
 interface ManagedUser {
   id: string;
@@ -38,104 +47,176 @@ interface UsersResponse {
   data?: ManagedUser[];
 }
 
+interface OrganizationInvitation {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  role: UserRole;
+  expiresAt: string;
+  acceptedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt?: string;
+}
+
+interface InvitationsResponse {
+  invitations?: OrganizationInvitation[];
+  data?: OrganizationInvitation[];
+}
+
 interface UserManagementProps {
   currentUserId: string;
 }
 
-interface UserForm {
+interface InviteForm {
   name: string;
   email: string;
   phone: string;
   role: UserRole;
-  password: string;
+}
+
+interface EditUserForm {
+  name: string;
+  email: string;
+  phone: string;
+  role: UserRole;
 }
 
 const roleLabels: Record<UserRole, string> = {
-  ADMIN: "Admin",
+  ADMIN: "Administrator",
   PHARMACIST: "Pharmacist",
   CLINICIAN: "Clinician",
 };
 
-const emptyForm: UserForm = {
+const emptyInviteForm: InviteForm = {
   name: "",
   email: "",
   phone: "",
   role: "PHARMACIST",
-  password: "",
 };
 
-const MIN_PASSWORD_LENGTH = 12;
-const MAX_PASSWORD_LENGTH = 128;
-
-const isStrongPassword = (password: string): boolean => {
-  if (
-    password.length < MIN_PASSWORD_LENGTH ||
-    password.length > MAX_PASSWORD_LENGTH
-  ) {
-    return false;
-  }
-
-  return (
-    /[A-Z]/.test(password) &&
-    /[a-z]/.test(password) &&
-    /\d/.test(password) &&
-    /[^A-Za-z0-9]/.test(password)
-  );
-};
-
-const getPasswordValidationMessage = (
-  password: string,
-): string | null => {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Password must contain at least ${MIN_PASSWORD_LENGTH} characters.`;
-  }
-
-  if (password.length > MAX_PASSWORD_LENGTH) {
-    return `Password cannot exceed ${MAX_PASSWORD_LENGTH} characters.`;
-  }
-
-  if (!/[A-Z]/.test(password)) {
-    return "Password must contain at least one uppercase letter.";
-  }
-
-  if (!/[a-z]/.test(password)) {
-    return "Password must contain at least one lowercase letter.";
-  }
-
-  if (!/\d/.test(password)) {
-    return "Password must contain at least one number.";
-  }
-
-  if (!/[^A-Za-z0-9]/.test(password)) {
-    return "Password must contain at least one special character.";
-  }
-
-  return null;
+const emptyEditForm: EditUserForm = {
+  name: "",
+  email: "",
+  phone: "",
+  role: "PHARMACIST",
 };
 
 const isValidEmail = (email: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 };
 
-export const UserManagement: React.FC<UserManagementProps> = ({
-  currentUserId,
-}) => {
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+const getInvitationStatus = (
+  invitation: OrganizationInvitation,
+): InvitationStatus => {
+  if (invitation.acceptedAt) {
+    return "ACCEPTED";
+  }
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  if (invitation.revokedAt) {
+    return "REVOKED";
+  }
+
+  if (
+    new Date(invitation.expiresAt).getTime() <=
+    Date.now()
+  ) {
+    return "EXPIRED";
+  }
+
+  return "PENDING";
+};
+
+const invitationStatusLabel: Record<
+  InvitationStatus,
+  string
+> = {
+  PENDING: "Pending",
+  ACCEPTED: "Accepted",
+  REVOKED: "Revoked",
+  EXPIRED: "Expired",
+};
+
+const formatDate = (
+  value?: string | null,
+): string => {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const getInvitationStatusClasses = (
+  status: InvitationStatus,
+): string => {
+  switch (status) {
+    case "PENDING":
+      return "bg-amber-100 text-amber-700";
+    case "ACCEPTED":
+      return "bg-emerald-100 text-emerald-700";
+    case "REVOKED":
+      return "bg-rose-100 text-rose-700";
+    case "EXPIRED":
+      return "bg-slate-100 text-slate-600";
+    default:
+      return "bg-slate-100 text-slate-600";
+  }
+};
+
+export const UserManagement: React.FC<
+  UserManagementProps
+> = ({ currentUserId }) => {
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [invitations, setInvitations] = useState<
+    OrganizationInvitation[]
+  >([]);
+
+  const [searchTerm, setSearchTerm] =
+    useState("");
+
+  const [isLoadingUsers, setIsLoadingUsers] =
+    useState(true);
+
+  const [isLoadingInvitations, setIsLoadingInvitations] =
+    useState(true);
+
+  const [isSaving, setIsSaving] =
+    useState(false);
+
+  const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] =
+    useState("");
+
+  const [isInviteModalOpen, setIsInviteModalOpen] =
+    useState(false);
+
   const [editingUser, setEditingUser] =
     useState<ManagedUser | null>(null);
 
-  const [form, setForm] = useState<UserForm>(emptyForm);
+  const [inviteForm, setInviteForm] =
+    useState<InviteForm>({
+      ...emptyInviteForm,
+    });
+
+  const [editForm, setEditForm] =
+    useState<EditUserForm>({
+      ...emptyEditForm,
+    });
 
   const loadUsers = async () => {
     try {
-      setIsLoading(true);
+      setIsLoadingUsers(true);
       setError("");
 
       const response = await apiGet<
@@ -144,7 +225,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
       const loadedUsers = Array.isArray(response)
         ? response
-        : response.users ?? response.data ?? [];
+        : response.users ??
+          response.data ??
+          [];
 
       setUsers(loadedUsers);
     } catch (requestError) {
@@ -154,36 +237,76 @@ export const UserManagement: React.FC<UserManagementProps> = ({
           : "Unable to load user accounts.",
       );
     } finally {
-      setIsLoading(false);
+      setIsLoadingUsers(false);
     }
   };
 
-  useEffect(() => {
-    void loadUsers();
-  }, []);
+  const loadInvitations = async () => {
+    try {
+      setIsLoadingInvitations(true);
 
-  const openCreateModal = () => {
-    setEditingUser(null);
-    setForm({ ...emptyForm });
-    setError("");
-    setSuccessMessage("");
-    setIsModalOpen(true);
+      const response =
+        await apiGet<
+          InvitationsResponse |
+            OrganizationInvitation[]
+        >("/invitations");
+
+      const loadedInvitations =
+        Array.isArray(response)
+          ? response
+          : response.invitations ??
+            response.data ??
+            [];
+
+      setInvitations(loadedInvitations);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to load organization invitations.",
+      );
+    } finally {
+      setIsLoadingInvitations(false);
+    }
   };
 
-  const openEditModal = (user: ManagedUser) => {
+  const loadAll = async () => {
+    await Promise.all([
+      loadUsers(),
+      loadInvitations(),
+    ]);
+  };
+
+  useEffect(() => {
+    void loadAll();
+  }, []);
+
+  const openInviteModal = () => {
+    setInviteForm({
+      ...emptyInviteForm,
+    });
+
+    setEditingUser(null);
+    setError("");
+    setSuccessMessage("");
+    setIsInviteModalOpen(true);
+  };
+
+  const openEditModal = (
+    user: ManagedUser,
+  ) => {
     setEditingUser(user);
 
-    setForm({
+    setEditForm({
       name: user.name,
       email: user.email,
       phone: user.phone ?? "",
       role: user.role,
-      password: "",
     });
 
     setError("");
     setSuccessMessage("");
-    setIsModalOpen(true);
+    setIsInviteModalOpen(true);
   };
 
   const closeModal = () => {
@@ -191,16 +314,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
       return;
     }
 
-    setIsModalOpen(false);
+    setIsInviteModalOpen(false);
     setEditingUser(null);
-    setForm({ ...emptyForm });
+    setInviteForm({
+      ...emptyInviteForm,
+    });
+    setEditForm({
+      ...emptyEditForm,
+    });
   };
 
-  const handleFormChange = (
-    field: keyof UserForm,
+  const handleInviteFormChange = (
+    field: keyof InviteForm,
     value: string,
   ) => {
-    setForm((previous) => ({
+    setInviteForm((previous) => ({
       ...previous,
       [field]:
         field === "role"
@@ -209,7 +337,20 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     }));
   };
 
-  const handleSubmit = async (
+  const handleEditFormChange = (
+    field: keyof EditUserForm,
+    value: string,
+  ) => {
+    setEditForm((previous) => ({
+      ...previous,
+      [field]:
+        field === "role"
+          ? (value as UserRole)
+          : value,
+    }));
+  };
+
+  const handleInviteSubmit = async (
     event: React.FormEvent<HTMLFormElement>,
   ) => {
     event.preventDefault();
@@ -217,10 +358,11 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     setError("");
     setSuccessMessage("");
 
-    const name = form.name.trim();
-    const email = form.email.trim().toLowerCase();
-    const phone = form.phone.trim();
-    const password = form.password;
+    const name = inviteForm.name.trim();
+    const email = inviteForm.email
+      .trim()
+      .toLowerCase();
+    const phone = inviteForm.phone.trim();
 
     if (!name) {
       setError("Full name is required.");
@@ -228,7 +370,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     }
 
     if (name.length < 2) {
-      setError("Full name must contain at least 2 characters.");
+      setError(
+        "Full name must contain at least 2 characters.",
+      );
       return;
     }
 
@@ -238,79 +382,112 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     }
 
     if (!isValidEmail(email)) {
-      setError("Please enter a valid email address.");
+      setError(
+        "Please enter a valid email address.",
+      );
       return;
-    }
-
-    if (!editingUser && !password) {
-      setError("A password is required.");
-      return;
-    }
-
-    if (password) {
-      const passwordError =
-        getPasswordValidationMessage(password);
-
-      if (passwordError) {
-        setError(passwordError);
-        return;
-      }
-
-      if (!isStrongPassword(password)) {
-        setError(
-          "Password must contain uppercase, lowercase, number, and special character.",
-        );
-        return;
-      }
     }
 
     setIsSaving(true);
 
     try {
-      if (editingUser) {
-        await apiPut(`/users/${editingUser.id}`, {
-          name,
-          email,
-          phone: phone || undefined,
-          role: form.role,
-        });
+      await apiPost("/invitations", {
+        name,
+        email,
+        phone: phone || undefined,
+        role: inviteForm.role,
+      });
 
-        if (password) {
-          await apiPut(
-            `/users/${editingUser.id}/password`,
-            {
-              password,
-            },
-          );
-        }
+      await loadInvitations();
 
-        setSuccessMessage(
-          "User account updated successfully.",
-        );
-      } else {
-        await apiPost("/users", {
-          name,
-          email,
-          phone: phone || undefined,
-          role: form.role,
-          password,
-        });
+      setSuccessMessage(
+        `Invitation sent successfully to ${email}.`,
+      );
 
-        setSuccessMessage(
-          "User account created successfully.",
-        );
-      }
+      setInviteForm({
+        ...emptyInviteForm,
+      });
 
-      await loadUsers();
-
-      setIsModalOpen(false);
-      setEditingUser(null);
-      setForm({ ...emptyForm });
+      setIsInviteModalOpen(false);
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to save the user account.",
+          : "Unable to send the invitation.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEditSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+
+    if (!editingUser) {
+      return;
+    }
+
+    setError("");
+    setSuccessMessage("");
+
+    const name = editForm.name.trim();
+    const email = editForm.email
+      .trim()
+      .toLowerCase();
+    const phone = editForm.phone.trim();
+
+    if (!name) {
+      setError("Full name is required.");
+      return;
+    }
+
+    if (name.length < 2) {
+      setError(
+        "Full name must contain at least 2 characters.",
+      );
+      return;
+    }
+
+    if (!email) {
+      setError("Email address is required.");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError(
+        "Please enter a valid email address.",
+      );
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      await apiPut(
+        `/users/${editingUser.id}`,
+        {
+          name,
+          email,
+          phone: phone || undefined,
+          role: editForm.role,
+        },
+      );
+
+      await loadUsers();
+
+      setIsInviteModalOpen(false);
+      setEditingUser(null);
+
+      setSuccessMessage(
+        "User account updated successfully.",
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to update the user account.",
       );
     } finally {
       setIsSaving(false);
@@ -345,9 +522,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
       setError("");
       setSuccessMessage("");
 
-      await apiPut(`/users/${user.id}`, {
-        isVerified: !user.isVerified,
-      });
+      await apiPut(
+        `/users/${user.id}`,
+        {
+          isVerified: !user.isVerified,
+        },
+      );
 
       await loadUsers();
 
@@ -387,7 +567,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
       setError("");
       setSuccessMessage("");
 
-      await apiDelete(`/users/${user.id}`);
+      await apiDelete(
+        `/users/${user.id}`,
+      );
 
       setUsers((previous) =>
         previous.filter(
@@ -407,8 +589,104 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     }
   };
 
+  const handleResendInvitation = async (
+    invitation: OrganizationInvitation,
+  ) => {
+    const status =
+      getInvitationStatus(invitation);
+
+    if (status !== "PENDING" && status !== "EXPIRED") {
+      setError(
+        "Only pending or expired invitations can be resent.",
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Resend the invitation to ${invitation.email}?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccessMessage("");
+      setIsSaving(true);
+
+      await apiPost(
+        `/invitations/${invitation.id}/resend`,
+        {},
+      );
+
+      await loadInvitations();
+
+      setSuccessMessage(
+        `Invitation resent successfully to ${invitation.email}.`,
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to resend the invitation.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRevokeInvitation = async (
+    invitation: OrganizationInvitation,
+  ) => {
+    if (
+      getInvitationStatus(invitation) !==
+      "PENDING"
+    ) {
+      setError(
+        "Only pending invitations can be revoked.",
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Revoke the invitation sent to ${invitation.email}?\n\nThey will no longer be able to use the current invitation link.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+      setSuccessMessage("");
+      setIsSaving(true);
+
+      await apiPost(
+        `/invitations/${invitation.id}/revoke`,
+        {},
+      );
+
+      await loadInvitations();
+
+      setSuccessMessage(
+        "Invitation revoked successfully.",
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to revoke the invitation.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const filteredUsers = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const query = searchTerm
+      .trim()
+      .toLowerCase();
 
     if (!query) {
       return users;
@@ -416,8 +694,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
     return users.filter((user) => {
       return (
-        user.name.toLowerCase().includes(query) ||
-        user.email.toLowerCase().includes(query) ||
+        user.name
+          .toLowerCase()
+          .includes(query) ||
+        user.email
+          .toLowerCase()
+          .includes(query) ||
         roleLabels[user.role]
           .toLowerCase()
           .includes(query) ||
@@ -427,6 +709,44 @@ export const UserManagement: React.FC<UserManagementProps> = ({
       );
     });
   }, [users, searchTerm]);
+
+  const filteredInvitations =
+    useMemo(() => {
+      const query = searchTerm
+        .trim()
+        .toLowerCase();
+
+      if (!query) {
+        return invitations;
+      }
+
+      return invitations.filter(
+        (invitation) => {
+          return (
+            invitation.name
+              .toLowerCase()
+              .includes(query) ||
+            invitation.email
+              .toLowerCase()
+              .includes(query) ||
+            roleLabels[invitation.role]
+              .toLowerCase()
+              .includes(query)
+          );
+        },
+      );
+    }, [invitations, searchTerm]);
+
+  const pendingInvitationCount =
+    invitations.filter(
+      (invitation) =>
+        getInvitationStatus(invitation) ===
+        "PENDING",
+    ).length;
+
+  const activeUserCount = users.filter(
+    (user) => user.isVerified,
+  ).length;
 
   return (
     <section className="min-h-screen bg-slate-100 p-6">
@@ -444,7 +764,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 </h1>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Manage staff accounts and organization access.
+                  Manage staff accounts, invitations,
+                  and organization access.
                 </p>
               </div>
             </div>
@@ -452,18 +773,17 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
           <button
             type="button"
-            onClick={openCreateModal}
+            onClick={openInviteModal}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662]"
           >
             <UserPlus className="h-4 w-4" />
-            Add User
+            Invite User
           </button>
         </div>
 
         {error && (
           <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-
             <span>{error}</span>
           </div>
         )}
@@ -471,10 +791,65 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         {successMessage && (
           <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-
             <span>{successMessage}</span>
           </div>
         )}
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#22577A]/10 text-[#22577A]">
+                <Users className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Active Users
+                </p>
+
+                <p className="mt-0.5 text-lg font-bold text-slate-800">
+                  {activeUserCount}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                <Mail className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Pending Invitations
+                </p>
+
+                <p className="mt-0.5 text-lg font-bold text-slate-800">
+                  {pendingInvitationCount}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <Shield className="h-4 w-4" />
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Organization Access
+                </p>
+
+                <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                  Role-based permissions
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4">
@@ -484,10 +859,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
                 <input
                   type="search"
-                  placeholder="Search users by name, email, role, or phone..."
+                  placeholder="Search users or invitations..."
                   value={searchTerm}
                   onChange={(event) =>
-                    setSearchTerm(event.target.value)
+                    setSearchTerm(
+                      event.target.value,
+                    )
                   }
                   className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
                 />
@@ -497,34 +874,53 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 {filteredUsers.length}{" "}
                 {filteredUsers.length === 1
                   ? "user"
-                  : "users"}
+                  : "users"}{" "}
+                · {filteredInvitations.length}{" "}
+                {filteredInvitations.length ===
+                1
+                  ? "invitation"
+                  : "invitations"}
               </div>
             </div>
           </div>
 
-          {isLoading ? (
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-[#22577A]" />
+
+              <h2 className="text-sm font-bold text-slate-800">
+                Active User Accounts
+              </h2>
+            </div>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Existing accounts with access to this
+              organization.
+            </p>
+          </div>
+
+          {isLoadingUsers ? (
             <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500">
               <Loader2 className="h-5 w-5 animate-spin" />
               Loading user accounts...
             </div>
           ) : filteredUsers.length === 0 ? (
-            <div className="p-12 text-center text-sm text-slate-500">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
-                <Search className="h-5 w-5 text-slate-400" />
-              </div>
+            <div className="p-10 text-center text-sm text-slate-500">
+              <Search className="mx-auto mb-3 h-5 w-5 text-slate-400" />
 
               <p className="font-semibold text-slate-700">
                 No user accounts found
               </p>
 
               <p className="mt-1 text-xs text-slate-500">
-                Try changing your search or add a new user.
+                Try changing your search or invite a
+                new user.
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[850px] text-left">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <thead className="bg-white text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-5 py-3">
                       User
@@ -557,7 +953,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       <td className="px-5 py-4">
                         <div className="font-semibold text-slate-900">
                           {user.name}
-                          {user.id === currentUserId && (
+
+                          {user.id ===
+                            currentUserId && (
                             <span className="ml-2 rounded-full bg-[#22577A]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#22577A]">
                               You
                             </span>
@@ -572,7 +970,6 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       <td className="px-5 py-4">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
                           <Shield className="h-3.5 w-3.5" />
-
                           {roleLabels[user.role]}
                         </span>
                       </td>
@@ -617,7 +1014,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                             <Pencil className="h-4 w-4" />
                           </button>
 
-                          {user.id !== currentUserId && (
+                          {user.id !==
+                            currentUserId && (
                             <>
                               <button
                                 type="button"
@@ -652,7 +1050,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                               <button
                                 type="button"
                                 onClick={() =>
-                                  void handleDelete(user)
+                                  void handleDelete(
+                                    user,
+                                  )
                                 }
                                 className="rounded-lg border border-rose-200 p-2 text-rose-600 transition-colors hover:bg-rose-50"
                                 title="Remove from organization"
@@ -666,6 +1066,201 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-[#22577A]" />
+
+              <h2 className="text-sm font-bold text-slate-800">
+                Organization Invitations
+              </h2>
+            </div>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Invitations allow staff to securely create
+              their own password and join this organization.
+            </p>
+          </div>
+
+          {isLoadingInvitations ? (
+            <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Loading invitations...
+            </div>
+          ) : filteredInvitations.length ===
+            0 ? (
+            <div className="p-10 text-center text-sm text-slate-500">
+              <Mail className="mx-auto mb-3 h-6 w-6 text-slate-400" />
+
+              <p className="font-semibold text-slate-700">
+                No invitations found
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Use Invite User to send an invitation to
+                a staff member.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-left">
+                <thead className="bg-white text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3">
+                      Invitee
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Role
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Sent
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Expires
+                    </th>
+
+                    <th className="px-5 py-3">
+                      Status
+                    </th>
+
+                    <th className="px-5 py-3 text-right">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {filteredInvitations.map(
+                    (invitation) => {
+                      const status =
+                        getInvitationStatus(
+                          invitation,
+                        );
+
+                      return (
+                        <tr
+                          key={invitation.id}
+                          className="transition-colors hover:bg-slate-50"
+                        >
+                          <td className="px-5 py-4">
+                            <div className="font-semibold text-slate-900">
+                              {invitation.name}
+                            </div>
+
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {invitation.email}
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
+                              <Shield className="h-3.5 w-3.5" />
+                              {roleLabels[
+                                invitation.role
+                              ]}
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-4 text-sm text-slate-600">
+                            {formatDate(
+                              invitation.createdAt,
+                            )}
+                          </td>
+
+                          <td className="px-5 py-4 text-sm text-slate-600">
+                            {formatDate(
+                              invitation.expiresAt,
+                            )}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${getInvitationStatusClasses(
+                                status,
+                              )}`}
+                            >
+                              {status ===
+                                "PENDING" && (
+                                <Clock3 className="h-3.5 w-3.5" />
+                              )}
+
+                              {status ===
+                                "ACCEPTED" && (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              )}
+
+                              {status ===
+                                "REVOKED" && (
+                                <Ban className="h-3.5 w-3.5" />
+                              )}
+
+                              {status ===
+                                "EXPIRED" && (
+                                <Clock3 className="h-3.5 w-3.5" />
+                              )}
+
+                              {
+                                invitationStatusLabel[
+                                  status
+                                ]
+                              }
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <div className="flex justify-end gap-2">
+                              {(status ===
+                                "PENDING" ||
+                                status ===
+                                  "EXPIRED") && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleResendInvitation(
+                                      invitation,
+                                    )
+                                  }
+                                  disabled={isSaving}
+                                  className="rounded-lg border border-slate-200 p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-[#22577A] disabled:cursor-not-allowed disabled:opacity-50"
+                                  title="Resend invitation"
+                                  aria-label={`Resend invitation to ${invitation.email}`}
+                                >
+                                  <RotateCw className="h-4 w-4" />
+                                </button>
+                              )}
+
+                              {status ===
+                                "PENDING" && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleRevokeInvitation(
+                                      invitation,
+                                    )
+                                  }
+                                  disabled={isSaving}
+                                  className="rounded-lg border border-rose-200 p-2 text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title="Revoke invitation"
+                                  aria-label={`Revoke invitation to ${invitation.email}`}
+                                >
+                                  <Ban className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    },
+                  )}
                 </tbody>
               </table>
             </div>
@@ -712,16 +1307,16 @@ export const UserManagement: React.FC<UserManagementProps> = ({
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                <LockKeyhole className="h-4 w-4" />
+                <Mail className="h-4 w-4" />
               </div>
 
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Password Security
+                  Secure Invitations
                 </p>
 
                 <p className="mt-0.5 text-sm font-semibold text-slate-800">
-                  Strong password policy
+                  Staff create their own passwords
                 </p>
               </div>
             </div>
@@ -729,19 +1324,29 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         </div>
       </div>
 
-      {isModalOpen && (
+      {isInviteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 p-5">
               <div>
-                <h2 className="font-bold text-slate-900">
-                  {editingUser
-                    ? "Edit User Account"
-                    : "Create User Account"}
-                </h2>
+                <div className="flex items-center gap-2">
+                  {editingUser ? (
+                    <Pencil className="h-4 w-4 text-[#22577A]" />
+                  ) : (
+                    <Mail className="h-4 w-4 text-[#22577A]" />
+                  )}
+
+                  <h2 className="font-bold text-slate-900">
+                    {editingUser
+                      ? "Edit User Account"
+                      : "Invite User"}
+                  </h2>
+                </div>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Manage account information and organization access.
+                  {editingUser
+                    ? "Update account information and organization access."
+                    : "Send a secure invitation so the staff member can create their own password."}
                 </p>
               </div>
 
@@ -757,7 +1362,11 @@ export const UserManagement: React.FC<UserManagementProps> = ({
             </div>
 
             <form
-              onSubmit={handleSubmit}
+              onSubmit={
+                editingUser
+                  ? handleEditSubmit
+                  : handleInviteSubmit
+              }
               className="space-y-4 p-5"
             >
               <div>
@@ -769,12 +1378,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                   type="text"
                   required
                   minLength={2}
-                  value={form.name}
+                  value={
+                    editingUser
+                      ? editForm.name
+                      : inviteForm.name
+                  }
                   onChange={(event) =>
-                    handleFormChange(
-                      "name",
-                      event.target.value,
-                    )
+                    editingUser
+                      ? handleEditFormChange(
+                          "name",
+                          event.target.value,
+                        )
+                      : handleInviteFormChange(
+                          "name",
+                          event.target.value,
+                        )
                   }
                   autoComplete="name"
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
@@ -789,12 +1407,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 <input
                   type="email"
                   required
-                  value={form.email}
+                  value={
+                    editingUser
+                      ? editForm.email
+                      : inviteForm.email
+                  }
                   onChange={(event) =>
-                    handleFormChange(
-                      "email",
-                      event.target.value,
-                    )
+                    editingUser
+                      ? handleEditFormChange(
+                          "email",
+                          event.target.value,
+                        )
+                      : handleInviteFormChange(
+                          "email",
+                          event.target.value,
+                        )
                   }
                   autoComplete="email"
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
@@ -809,12 +1436,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
                   <input
                     type="tel"
-                    value={form.phone}
+                    value={
+                      editingUser
+                        ? editForm.phone
+                        : inviteForm.phone
+                    }
                     onChange={(event) =>
-                      handleFormChange(
-                        "phone",
-                        event.target.value,
-                      )
+                      editingUser
+                        ? handleEditFormChange(
+                            "phone",
+                            event.target.value,
+                          )
+                        : handleInviteFormChange(
+                            "phone",
+                            event.target.value,
+                          )
                     }
                     autoComplete="tel"
                     className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
@@ -827,12 +1463,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                   </label>
 
                   <select
-                    value={form.role}
+                    value={
+                      editingUser
+                        ? editForm.role
+                        : inviteForm.role
+                    }
                     onChange={(event) =>
-                      handleFormChange(
-                        "role",
-                        event.target.value,
-                      )
+                      editingUser
+                        ? handleEditFormChange(
+                            "role",
+                            event.target.value,
+                          )
+                        : handleInviteFormChange(
+                            "role",
+                            event.target.value,
+                          )
                     }
                     className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
                   >
@@ -845,83 +1490,63 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                     </option>
 
                     <option value="ADMIN">
-                      Admin
+                      Administrator
                     </option>
                   </select>
                 </div>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-700">
-                  {editingUser
-                    ? "New Password (optional)"
-                    : "Password"}
-                </label>
+              {!editingUser && (
+                <>
+                  <div className="rounded-xl border border-[#22577A]/20 bg-[#22577A]/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <Mail className="mt-0.5 h-5 w-5 shrink-0 text-[#22577A]" />
 
-                <input
-                  type="password"
-                  required={!editingUser}
-                  minLength={MIN_PASSWORD_LENGTH}
-                  maxLength={MAX_PASSWORD_LENGTH}
-                  value={form.password}
-                  onChange={(event) =>
-                    handleFormChange(
-                      "password",
-                      event.target.value,
-                    )
-                  }
-                  autoComplete={
-                    editingUser
-                      ? "new-password"
-                      : "new-password"
-                  }
-                  placeholder={
-                    editingUser
-                      ? "Leave blank to keep current password"
-                      : "Enter a strong password"
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
-                />
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">
+                          Secure invitation
+                        </p>
 
-                <div className="mt-2 rounded-xl bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-semibold text-slate-600">
-                    Password requirements
-                  </p>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                          An invitation link will be sent to
+                          this email address. The recipient will
+                          use the secure link to create their own
+                          password.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-                  <div className="grid grid-cols-1 gap-1 text-xs text-slate-500 sm:grid-cols-2">
-                    <span>
-                      • 12–128 characters
-                    </span>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                    <div className="flex items-start gap-2">
+                      <Shield className="mt-0.5 h-4 w-4 shrink-0 text-[#22577A]" />
 
-                    <span>
-                      • Uppercase letter
-                    </span>
+                      <p>
+                        The selected role controls this user's
+                        access within the current organization.
+                        Administrators can manage organization
+                        users and invitations.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
 
-                    <span>
-                      • Lowercase letter
-                    </span>
+              {editingUser && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="flex items-start gap-2">
+                    <Shield className="mt-0.5 h-4 w-4 shrink-0 text-[#22577A]" />
 
-                    <span>
-                      • Number
-                    </span>
-
-                    <span>
-                      • Special character
-                    </span>
+                    <p>
+                      The selected role controls this user's
+                      access within the current organization.
+                      Passwords are managed by the account
+                      holder and are not changed from this
+                      screen.
+                    </p>
                   </div>
                 </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <div className="flex items-start gap-2">
-                  <Shield className="mt-0.5 h-4 w-4 shrink-0 text-[#22577A]" />
-
-                  <p>
-                    The selected role controls this user's
-                    access within the current organization.
-                  </p>
-                </div>
-              </div>
+              )}
 
               <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button
@@ -940,13 +1565,15 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 >
                   {isSaving ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
+                  ) : editingUser ? (
                     <Save className="h-4 w-4" />
+                  ) : (
+                    <Mail className="h-4 w-4" />
                   )}
 
                   {editingUser
                     ? "Save Changes"
-                    : "Create User"}
+                    : "Send Invitation"}
                 </button>
               </div>
             </form>

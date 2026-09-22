@@ -6,14 +6,13 @@ import React, {
 import {
   Lock,
   Mail,
-  User,
   X,
-  Send,
   AlertCircle,
   ArrowRight,
   Eye,
   EyeOff,
   ShieldCheck,
+  UserPlus,
 } from "lucide-react";
 
 import type {
@@ -22,7 +21,6 @@ import type {
 
 import {
   authService,
-  type AuthRole,
 } from "../services/auth";
 
 interface AuthModalProps {
@@ -45,12 +43,7 @@ interface AuthModalProps {
 type AuthMode =
   | "login"
   | "signup"
-  | "verify"
   | "forgot";
-
-type PublicSignupRole =
-  | "Clinician"
-  | "Pharmacist";
 
 const isValidEmail = (
   value: string,
@@ -181,38 +174,6 @@ const isValidEmail = (
   return true;
 };
 
-const isStrongPassword = (
-  value: string,
-): boolean => {
-  if (
-    value.length < 12 ||
-    value.length > 128
-  ) {
-    return false;
-  }
-
-  const hasUppercase =
-    /[A-Z]/.test(value);
-
-  const hasLowercase =
-    /[a-z]/.test(value);
-
-  const hasNumber =
-    /\d/.test(value);
-
-  const hasSpecial =
-    /[^A-Za-z0-9]/.test(
-      value,
-    );
-
-  return (
-    hasUppercase &&
-    hasLowercase &&
-    hasNumber &&
-    hasSpecial
-  );
-};
-
 export const AuthModal: React.FC<
   AuthModalProps
 > = ({
@@ -220,14 +181,15 @@ export const AuthModal: React.FC<
   onClose,
   currentUser,
   onLoginSuccess,
-  onSignUpSuccess,
   initialMode = "login",
 }) => {
   const [
     authMode,
     setAuthMode,
   ] = useState<AuthMode>(
-    initialMode,
+    initialMode === "signup"
+      ? "login"
+      : initialMode,
   );
 
   const [
@@ -246,53 +208,6 @@ export const AuthModal: React.FC<
   ] = useState(false);
 
   const [
-    signupName,
-    setSignupName,
-  ] = useState("");
-
-  const [
-    signupEmail,
-    setSignupEmail,
-  ] = useState("");
-
-  const [
-    signupPhone,
-    setSignupPhone,
-  ] = useState("");
-
-  const [
-    signupRole,
-    setSignupRole,
-  ] = useState<PublicSignupRole>(
-    "Pharmacist",
-  );
-
-  const [
-    signupPassword,
-    setSignupPassword,
-  ] = useState("");
-
-  const [
-    signupConfirmPassword,
-    setSignupConfirmPassword,
-  ] = useState("");
-
-  const [
-    showSignupPassword,
-    setShowSignupPassword,
-  ] = useState(false);
-
-  const [
-    verificationCode,
-    setVerificationCode,
-  ] = useState("");
-
-  const [
-    verificationEmail,
-    setVerificationEmail,
-  ] = useState("");
-
-  const [
     resetEmail,
     setResetEmail,
   ] = useState("");
@@ -303,29 +218,9 @@ export const AuthModal: React.FC<
   ] = useState("");
 
   const [
-    signupError,
-    setSignupError,
-  ] = useState("");
-
-  const [
-    verificationError,
-    setVerificationError,
-  ] = useState("");
-
-  const [
     resetError,
     setResetError,
   ] = useState("");
-
-  const [
-    isSubmitting,
-    setIsSubmitting,
-  ] = useState(false);
-
-  const [
-    isResendingCode,
-    setIsResendingCode,
-  ] = useState(false);
 
   const [
     resetMessage,
@@ -333,28 +228,32 @@ export const AuthModal: React.FC<
   ] = useState("");
 
   const [
-    verificationMessage,
-    setVerificationMessage,
-  ] = useState("");
+    isSubmitting,
+    setIsSubmitting,
+  ] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
 
+    /*
+     * Public registration is intentionally disabled.
+     *
+     * If any older part of the application attempts
+     * to open the modal in "signup" mode, we safely
+     * redirect it to the login screen.
+     */
     setAuthMode(
-      initialMode,
+      initialMode === "signup"
+        ? "login"
+        : initialMode,
     );
 
     setLoginError("");
-    setSignupError("");
-    setVerificationError("");
     setResetError("");
     setResetMessage("");
-    setVerificationMessage("");
-    setVerificationCode("");
     setIsSubmitting(false);
-    setIsResendingCode(false);
   }, [
     isOpen,
     initialMode,
@@ -395,213 +294,6 @@ export const AuthModal: React.FC<
       }
     };
 
-  const handleSignupSubmit =
-    async (
-      event: React.FormEvent<HTMLFormElement>,
-    ) => {
-      event.preventDefault();
-
-      setSignupError("");
-
-      if (
-        signupName.trim()
-          .length < 2
-      ) {
-        setSignupError(
-          "Please enter your full name.",
-        );
-        return;
-      }
-
-      if (
-        !isValidEmail(
-          signupEmail,
-        )
-      ) {
-        setSignupError(
-          "Please enter a valid email address.",
-        );
-        return;
-      }
-
-      if (
-        !isStrongPassword(
-          signupPassword,
-        )
-      ) {
-        setSignupError(
-          "Password must contain at least 12 characters, including uppercase, lowercase, a number and a special character.",
-        );
-        return;
-      }
-
-      if (
-        signupPassword !==
-        signupConfirmPassword
-      ) {
-        setSignupError(
-          "Passwords do not match.",
-        );
-        return;
-      }
-
-      setIsSubmitting(true);
-
-      try {
-        const roleMap: Record<
-          PublicSignupRole,
-          AuthRole
-        > = {
-          Pharmacist:
-            "PHARMACIST",
-          Clinician:
-            "CLINICIAN",
-        };
-
-        const user =
-          await authService.register(
-            {
-              name:
-                signupName.trim(),
-
-              email:
-                signupEmail
-                  .trim()
-                  .toLowerCase(),
-
-              phone:
-                signupPhone.trim() ||
-                undefined,
-
-              password:
-                signupPassword,
-
-              role:
-                roleMap[
-                  signupRole
-                ],
-            },
-          );
-
-        setVerificationEmail(
-          user.email,
-        );
-
-        setVerificationCode(
-          "",
-        );
-
-        setVerificationError(
-          "",
-        );
-
-        setVerificationMessage(
-          `A 6-digit verification code has been sent to ${user.email}.`,
-        );
-
-        setAuthMode(
-          "verify",
-        );
-      } catch (error) {
-        setSignupError(
-          error instanceof Error
-            ? error.message
-            : "Unable to create the account.",
-        );
-      } finally {
-        setIsSubmitting(false);
-      }
-    };
-
-  const handleVerificationSubmit =
-    async (
-      event: React.FormEvent<HTMLFormElement>,
-    ) => {
-      event.preventDefault();
-
-      setVerificationError("");
-      setVerificationMessage("");
-      setIsSubmitting(true);
-
-      const code =
-        verificationCode.trim();
-
-      if (
-        !/^\d{6}$/.test(code)
-      ) {
-        setVerificationError(
-          "Please enter the 6-digit verification code.",
-        );
-        setIsSubmitting(false);
-        return;
-      }
-
-      try {
-        await authService.verifyEmail(
-          verificationEmail,
-          code,
-        );
-
-        /*
-         * The password is only retained in
-         * React memory during this registration
-         * flow. It is never stored in localStorage.
-         *
-         * After successful verification we
-         * perform the normal login flow so the
-         * existing authentication/session
-         * behavior remains unchanged.
-         */
-        const user =
-          await authService.login(
-            verificationEmail,
-            signupPassword,
-          );
-
-        onSignUpSuccess(user);
-        onClose();
-
-        setSignupPassword("");
-        setSignupConfirmPassword("");
-        setVerificationCode("");
-      } catch (error) {
-        setVerificationError(
-          error instanceof Error
-            ? error.message
-            : "Unable to verify your email address.",
-        );
-      } finally {
-        setIsSubmitting(false);
-      }
-    };
-
-  const handleResendVerification =
-    async () => {
-      setVerificationError("");
-      setVerificationMessage("");
-      setIsResendingCode(true);
-
-      try {
-        await authService.resendVerificationCode(
-          verificationEmail,
-        );
-
-        setVerificationMessage(
-          "A new verification code has been sent. Please check your email.",
-        );
-
-        setVerificationCode("");
-      } catch (error) {
-        setVerificationError(
-          error instanceof Error
-            ? error.message
-            : "Unable to resend the verification code.",
-        );
-      } finally {
-        setIsResendingCode(false);
-      }
-    };
-
   const handlePasswordResetRequest =
     async (
       event: React.FormEvent<HTMLFormElement>,
@@ -611,11 +303,6 @@ export const AuthModal: React.FC<
       setResetError("");
       setResetMessage("");
 
-      /*
-       * Password reset remains deliberately
-       * disabled until the server-side reset
-       * mechanism is implemented.
-       */
       if (
         !isValidEmail(
           resetEmail,
@@ -627,6 +314,11 @@ export const AuthModal: React.FC<
         return;
       }
 
+      /*
+       * Password reset remains deliberately
+       * disabled until the secure server-side
+       * reset mechanism is implemented.
+       */
       setResetError(
         "Password reset is not yet enabled on the server. Your account remains unchanged.",
       );
@@ -638,11 +330,8 @@ export const AuthModal: React.FC<
     setAuthMode(mode);
 
     setLoginError("");
-    setSignupError("");
-    setVerificationError("");
     setResetError("");
     setResetMessage("");
-    setVerificationMessage("");
   };
 
   return (
@@ -677,58 +366,48 @@ export const AuthModal: React.FC<
                   "Log in to access the pharmacy management system"}
 
                 {authMode ===
-                  "signup" &&
-                  "Create a secure pharmacy account"}
-
-                {authMode ===
-                  "verify" &&
-                  "Verify your email address"}
-
-                {authMode ===
                   "forgot" &&
                   "Password recovery"}
               </p>
             </div>
           </div>
 
-          {authMode !==
-            "verify" && (
-            <div className="flex gap-2 mt-5 bg-black/20 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() =>
-                  switchMode(
-                    "login",
-                  )
-                }
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  authMode ===
-                  "login"
-                    ? "bg-white text-[#22577A] shadow-sm"
-                    : "text-white/80 hover:bg-white/10"
-                }`}
-              >
-                Log In
-              </button>
+          {/* Authentication tabs */}
+          <div className="flex gap-2 mt-5 bg-black/20 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() =>
+                switchMode(
+                  "login",
+                )
+              }
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                authMode ===
+                "login"
+                  ? "bg-white text-[#22577A] shadow-sm"
+                  : "text-white/80 hover:bg-white/10"
+              }`}
+            >
+              Log In
+            </button>
 
-              <button
-                type="button"
-                onClick={() =>
-                  switchMode(
-                    "signup",
-                  )
-                }
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  authMode ===
-                  "signup"
-                    ? "bg-white text-[#22577A] shadow-sm"
-                    : "text-white/80 hover:bg-white/10"
-                }`}
-              >
-                Sign Up
-              </button>
-            </div>
-          )}
+            <button
+              type="button"
+              onClick={() =>
+                switchMode(
+                  "forgot",
+                )
+              }
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                authMode ===
+                "forgot"
+                  ? "bg-white text-[#22577A] shadow-sm"
+                  : "text-white/80 hover:bg-white/10"
+              }`}
+            >
+              Password Help
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -882,6 +561,29 @@ export const AuthModal: React.FC<
                 )}
               </button>
 
+              {/* Organization-managed access notice */}
+              <div className="rounded-xl border border-[#22577A]/15 bg-[#22577A]/5 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#22577A]/10">
+                    <UserPlus className="h-4 w-4 text-[#22577A]" />
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-bold text-slate-800">
+                      Need an account?
+                    </p>
+
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                      PharmaTrack accounts are
+                      managed by your pharmacy or
+                      clinic administrator. Ask
+                      your administrator to invite
+                      you to the system.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="pt-3 border-t border-slate-100 text-center">
                 <p className="text-[11px] text-slate-500">
                   Authentication is handled
@@ -889,375 +591,6 @@ export const AuthModal: React.FC<
                   server.
                 </p>
               </div>
-            </form>
-          )}
-
-          {/* SIGN UP */}
-          {authMode ===
-            "signup" && (
-            <form
-              onSubmit={
-                handleSignupSubmit
-              }
-              className="space-y-3"
-            >
-              {signupError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-
-                  <span>
-                    {signupError}
-                  </span>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Full Name *
-                </label>
-
-                <div className="relative">
-                  <User className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-
-                  <input
-                    type="text"
-                    required
-                    autoComplete="name"
-                    placeholder="Full name"
-                    value={
-                      signupName
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      setSignupName(
-                        event.target.value,
-                      )
-                    }
-                    className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Email Address *
-                </label>
-
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-
-                  <input
-                    type="email"
-                    required
-                    autoComplete="email"
-                    placeholder="name@pharmacy.co.ke"
-                    value={
-                      signupEmail
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      setSignupEmail(
-                        event.target.value,
-                      )
-                    }
-                    className="w-full pl-10 pr-4 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Role *
-                  </label>
-
-                  <select
-                    value={
-                      signupRole
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      setSignupRole(
-                        event.target.value as PublicSignupRole,
-                      )
-                    }
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none font-medium"
-                  >
-                    <option value="Pharmacist">
-                      Pharmacist
-                    </option>
-
-                    <option value="Clinician">
-                      Clinician
-                    </option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Phone
-                  </label>
-
-                  <input
-                    type="text"
-                    autoComplete="tel"
-                    placeholder="0712345678"
-                    value={
-                      signupPhone
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      setSignupPhone(
-                        event.target.value,
-                      )
-                    }
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Password *
-                  </label>
-
-                  <div className="relative">
-                    <input
-                      type={
-                        showSignupPassword
-                          ? "text"
-                          : "password"
-                      }
-                      required
-                      minLength={12}
-                      maxLength={128}
-                      autoComplete="new-password"
-                      placeholder="12+ chars, mixed"
-                      value={
-                        signupPassword
-                      }
-                      onChange={(
-                        event,
-                      ) =>
-                        setSignupPassword(
-                          event.target.value,
-                        )
-                      }
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setShowSignupPassword(
-                          (
-                            value,
-                          ) =>
-                            !value,
-                        )
-                      }
-                      className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
-                      aria-label={
-                        showSignupPassword
-                          ? "Hide password"
-                          : "Show password"
-                      }
-                    >
-                      {showSignupPassword ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    12+ characters with uppercase,
-                    lowercase, number and special
-                    character.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Confirm Password *
-                  </label>
-
-                  <input
-                    type={
-                      showSignupPassword
-                        ? "text"
-                        : "password"
-                    }
-                    required
-                    minLength={12}
-                    maxLength={128}
-                    autoComplete="new-password"
-                    placeholder="Repeat password"
-                    value={
-                      signupConfirmPassword
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      setSignupConfirmPassword(
-                        event.target.value,
-                      )
-                    }
-                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={
-                  isSubmitting
-                }
-                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] disabled:opacity-60 disabled:cursor-not-allowed rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 mt-2"
-              >
-                <Send className="w-4 h-4" />
-
-                {isSubmitting
-                  ? "Creating Account..."
-                  : "Create Account"}
-              </button>
-
-              <p className="text-[10px] text-slate-400 text-center">
-                Your password is securely
-                processed by the PharmaTrack
-                server and is never stored in
-                the browser as plaintext.
-              </p>
-            </form>
-          )}
-
-          {/* VERIFY EMAIL */}
-          {authMode ===
-            "verify" && (
-            <form
-              onSubmit={
-                handleVerificationSubmit
-              }
-              className="space-y-4"
-            >
-              {verificationError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-
-                  <span>
-                    {verificationError}
-                  </span>
-                </div>
-              )}
-
-              {verificationMessage && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl">
-                  {verificationMessage}
-                </div>
-              )}
-
-              <div className="text-center">
-                <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-[#22577A]/10 flex items-center justify-center">
-                  <ShieldCheck className="w-7 h-7 text-[#22577A]" />
-                </div>
-
-                <h3 className="font-bold text-slate-900 text-lg">
-                  Verify Your Email
-                </h3>
-
-                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                  We sent a 6-digit verification
-                  code to:
-                </p>
-
-                <p className="text-sm font-bold text-[#22577A] mt-1 break-all">
-                  {verificationEmail}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Verification Code
-                </label>
-
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  pattern="[0-9]{6}"
-                  required
-                  placeholder="Enter 6-digit code"
-                  value={
-                    verificationCode
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    setVerificationCode(
-                      event.target.value.replace(
-                        /\D/g,
-                        "",
-                      ),
-                    )
-                  }
-                  className="w-full px-4 py-3 text-center text-xl tracking-[0.4em] font-bold bg-white border border-slate-300 rounded-xl focus:border-[#22577A] focus:outline-none"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={
-                  isSubmitting ||
-                  verificationCode.length !==
-                    6
-                }
-                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] disabled:opacity-60 disabled:cursor-not-allowed rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"
-              >
-                <ShieldCheck className="w-4 h-4" />
-
-                {isSubmitting
-                  ? "Verifying..."
-                  : "Verify Email"}
-              </button>
-
-              <button
-                type="button"
-                disabled={
-                  isResendingCode
-                }
-                onClick={
-                  handleResendVerification
-                }
-                className="w-full py-2 text-xs font-semibold text-[#22577A] hover:underline disabled:opacity-50"
-              >
-                {isResendingCode
-                  ? "Sending new code..."
-                  : "Didn't receive the code? Resend"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  switchMode(
-                    "signup",
-                  )
-                }
-                className="w-full text-xs font-semibold text-slate-500 hover:text-[#22577A]"
-              >
-                ← Back to Sign Up
-              </button>
-
-              <p className="text-[10px] text-slate-400 text-center">
-                The verification code expires
-                after 15 minutes.
-              </p>
             </form>
           )}
 
@@ -1341,6 +674,14 @@ export const AuthModal: React.FC<
               >
                 ← Back to Log In
               </button>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[10px] leading-relaxed text-slate-500 text-center">
+                  If you cannot access your
+                  account, contact your pharmacy or
+                  clinic administrator for assistance.
+                </p>
+              </div>
             </form>
           )}
         </div>

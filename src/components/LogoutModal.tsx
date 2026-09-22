@@ -1,5 +1,9 @@
-import React from 'react';
-import { LogOut, AlertTriangle, X } from 'lucide-react';
+import React from "react";
+import {
+  LogOut,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 
 interface LogoutModalProps {
   isOpen: boolean;
@@ -8,52 +12,69 @@ interface LogoutModalProps {
   userName?: string;
 }
 
-export const LogoutModal: React.FC<LogoutModalProps> = ({
+export const LogoutModal: React.FC<
+  LogoutModalProps
+> = ({
   isOpen,
   onClose,
   onConfirmLogout,
-  userName = 'Practitioner',
+  userName = "Practitioner",
 }) => {
-  if (!isOpen) return null;
+  if (!isOpen) {
+    return null;
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div 
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative animate-in zoom-in-95 duration-150"
-        onClick={(e) => e.stopPropagation()}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-150">
+      <div
+        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logout-dialog-title"
       >
-        {/* Close Button */}
+        {/* Close button */}
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          aria-label="Close logout confirmation"
         >
-          <X className="w-5 h-5" />
+          <X className="h-5 w-5" />
         </button>
 
-        <div className="flex flex-col items-center text-center space-y-4">
-          {/* Outward Logout Icon Badge */}
-          <div className="w-14 h-14 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-            <LogOut className="w-7 h-7 stroke-[2.2]" />
+        <div className="flex flex-col items-center space-y-4 text-center">
+          {/* Logout icon */}
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-[#22577A]/15 bg-[#22577A]/10 text-[#22577A]">
+            <LogOut className="h-7 w-7 stroke-[2.2]" />
           </div>
 
           <div>
-            <h3 className="text-xl font-bold text-slate-900 tracking-tight">
+            <h3
+              id="logout-dialog-title"
+              className="text-xl font-bold tracking-tight text-slate-900"
+            >
               Log Out of PharmaTrack?
             </h3>
-            <p className="text-xs sm:text-sm text-slate-500 mt-2 leading-relaxed">
-              Are you sure you want to log out, <strong className="text-slate-800">{userName}</strong>? You will need to log in again to access dispensing controls and patient management.
+
+            <p className="mt-2 text-xs leading-relaxed text-slate-500 sm:text-sm">
+              Are you sure you want to log out,{" "}
+              <strong className="text-slate-800">
+                {userName}
+              </strong>
+              ? You will need to log in again to access
+              dispensing controls and patient management.
             </p>
           </div>
 
           {/* Buttons */}
-          <div className="grid grid-cols-2 gap-3 w-full pt-2">
+          <div className="grid w-full grid-cols-2 gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+              className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:text-sm"
             >
-              Cancel
+              <AlertTriangle className="h-4 w-4 text-slate-500" />
+              <span>Cancel</span>
             </button>
 
             <button
@@ -62,9 +83,9 @@ export const LogoutModal: React.FC<LogoutModalProps> = ({
                 onConfirmLogout();
                 onClose();
               }}
-              className="px-4 py-2.5 text-xs sm:text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662] sm:text-sm"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="h-4 w-4" />
               <span>Log Out</span>
             </button>
           </div>
@@ -73,3 +94,5 @@ export const LogoutModal: React.FC<LogoutModalProps> = ({
     </div>
   );
 };
+
+export default LogoutModal;

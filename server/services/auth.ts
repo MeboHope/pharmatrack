@@ -6,11 +6,13 @@ import { prisma } from "../prisma";
 import {
   isStrongPassword,
   isValidEmail,
+  isEmailDomainConfigured,
 } from "../middleware/security";
 
 export {
   isStrongPassword,
   isValidEmail,
+  isEmailDomainConfigured,
 };
 
 export type AppRole =
@@ -28,7 +30,10 @@ export interface AuthUser {
   isVerified: boolean;
   organizationId?: string | null;
   organizationName?: string | null;
-  organizationType?: "PHARMACY" | "CLINIC" | null;
+  organizationType?:
+    | "PHARMACY"
+    | "CLINIC"
+    | null;
 }
 
 export interface UserOrganization {
@@ -36,7 +41,10 @@ export interface UserOrganization {
   name: string;
   type: "PHARMACY" | "CLINIC";
   status: "ACTIVE" | "SUSPENDED";
-  role: "ADMIN" | "PHARMACIST" | "CLINICIAN";
+  role:
+    | "ADMIN"
+    | "PHARMACIST"
+    | "CLINICIAN";
 }
 
 export interface JwtPayload {
@@ -68,11 +76,16 @@ if (!JWT_SECRET) {
   );
 }
 
+// Type assertion: JWT_SECRET is guaranteed to be a string after the check above
+const JWT_SECRET_FINAL = JWT_SECRET as string;
+
 const ACCESS_TOKEN_EXPIRES_IN =
-  process.env.ACCESS_TOKEN_EXPIRES_IN || "15m";
+  process.env.ACCESS_TOKEN_EXPIRES_IN ||
+  "15m";
 
 const REFRESH_TOKEN_EXPIRES_IN =
-  process.env.REFRESH_TOKEN_EXPIRES_IN || "7d";
+  process.env.REFRESH_TOKEN_EXPIRES_IN ||
+  "7d";
 
 const VERIFICATION_CODE_EXPIRY_MINUTES = 15;
 
@@ -139,7 +152,10 @@ function parseDurationToMilliseconds(
 
   const amount = Number(match[1]);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
     return fallbackMilliseconds;
   }
 
@@ -154,7 +170,11 @@ function parseDurationToMilliseconds(
       return amount * 60 * 60 * 1000;
 
     case "d":
-      return amount * 24 * 60 * 60 * 1000;
+      return amount *
+        24 *
+        60 *
+        60 *
+        1000;
 
     default:
       return fallbackMilliseconds;
@@ -165,7 +185,11 @@ function getRefreshTokenExpiryDate(): Date {
   const milliseconds =
     parseDurationToMilliseconds(
       REFRESH_TOKEN_EXPIRES_IN,
-      7 * 24 * 60 * 60 * 1000,
+      7 *
+        24 *
+        60 *
+        60 *
+        1000,
     );
 
   return new Date(
@@ -193,7 +217,9 @@ export function hashPassword(
   password: string,
 ): string {
   const salt =
-    crypto.randomBytes(16).toString("hex");
+    crypto
+      .randomBytes(16)
+      .toString("hex");
 
   const derivedKey =
     crypto.scryptSync(
@@ -289,15 +315,6 @@ async function getUserOrganizationContext(
     };
   }
 
-  /*
-   * Backward-compatible fallback.
-   *
-   * This is used for the initial login when
-   * no organization has yet been selected.
-   *
-   * Once the session has an organizationId,
-   * refresh and /me use that exact organization.
-   */
   const membership =
     await prisma.organizationMembership.findFirst(
       {
@@ -365,12 +382,6 @@ async function buildAuthenticatedUser(
     };
   }
 
-  /*
-   * Super Admin is a platform-level account.
-   *
-   * It does not operate through a normal
-   * tenant organization context.
-   */
   if (user.role === "SUPER_ADMIN") {
     return {
       id: user.id,
@@ -400,21 +411,12 @@ async function buildAuthenticatedUser(
     name: user.name,
     email: user.email,
     phone: user.phone,
-
-    /*
-     * The organization membership role is
-     * authoritative for tenant access.
-     */
     role: organization.role,
-
     isVerified: user.isVerified,
-
     organizationId:
       organization.organizationId,
-
     organizationName:
       organization.organizationName,
-
     organizationType:
       organization.organizationType,
   };
@@ -500,7 +502,7 @@ export function createAccessToken(
 
   return jwt.sign(
     payload,
-    JWT_SECRET,
+    JWT_SECRET_FINAL,
     {
       expiresIn:
         ACCESS_TOKEN_EXPIRES_IN as jwt.SignOptions["expiresIn"],
@@ -549,8 +551,8 @@ export function verifyAccessToken(
   const decoded =
     jwt.verify(
       token,
-      JWT_SECRET,
-    ) as JwtPayload;
+      JWT_SECRET_FINAL,
+    ) as unknown as JwtPayload;
 
   if (decoded.type !== "access") {
     throw new Error(
@@ -570,7 +572,9 @@ export function verifyAccessToken(
       decoded.role,
     )
   ) {
-    throw new Error("Invalid role.");
+    throw new Error(
+      "Invalid role.",
+    );
   }
 
   if (
@@ -592,8 +596,8 @@ export function verifyRefreshToken(
   const decoded =
     jwt.verify(
       token,
-      JWT_SECRET,
-    ) as JwtPayload;
+      JWT_SECRET_FINAL,
+    ) as unknown as JwtPayload;
 
   if (decoded.type !== "refresh") {
     throw new Error(
@@ -613,7 +617,9 @@ export function verifyRefreshToken(
       decoded.role,
     )
   ) {
-    throw new Error("Invalid role.");
+    throw new Error(
+      "Invalid role.",
+    );
   }
 
   if (
@@ -654,9 +660,30 @@ export async function registerUser(
     );
   }
 
+  /*
+   * First validate the structure.
+   */
   if (!isValidEmail(email)) {
     throw new Error(
-      "Invalid email address.",
+      "Please enter a valid email address.",
+    );
+  }
+
+  /*
+   * Then verify that the email domain has
+   * usable mail/DNS configuration.
+   *
+   * This prevents registration using domains
+   * that clearly cannot receive email.
+   */
+  const emailDomainConfigured =
+    await isEmailDomainConfigured(
+      email,
+    );
+
+  if (!emailDomainConfigured) {
+    throw new Error(
+      "This email address cannot be verified because its domain does not appear to accept email. Please use a valid, active email address.",
     );
   }
 
@@ -774,13 +801,29 @@ export async function registerUser(
           },
         );
 
+        /*
+         * Prisma relation name is "user".
+         *
+         * The schema defines:
+         *
+         * user User @relation(...)
+         *
+         * Therefore we connect through the
+         * relation instead of supplying userId
+         * directly to the checked create input.
+         */
         await tx.emailVerification.create(
           {
             data: {
-              userId: user.id,
               codeHash,
               expiresAt,
               attempts: 0,
+
+              user: {
+                connect: {
+                  id: user.id,
+                },
+              },
             },
           },
         );
@@ -959,6 +1002,14 @@ export async function resendVerificationCode(
     );
   }
 
+  /*
+   * We deliberately do not run DNS validation
+   * here.
+   *
+   * The original registration already passed
+   * domain validation, and the user may simply
+   * be requesting another verification code.
+   */
   const verificationCode =
     generateVerificationCode();
 
@@ -988,10 +1039,15 @@ export async function resendVerificationCode(
       },
 
       create: {
-        userId,
         codeHash,
         expiresAt,
         attempts: 0,
+
+        user: {
+          connect: {
+            id: userId,
+          },
+        },
       },
     },
   );
@@ -1101,13 +1157,6 @@ export async function refreshAccessToken(
   }
 
   if (storedToken.revokedAt) {
-    /*
-     * Reuse detection.
-     *
-     * If somebody attempts to reuse a rotated
-     * refresh token, revoke all currently active
-     * sessions for that user.
-     */
     if (
       storedToken.replacedByTokenId
     ) {
@@ -1150,15 +1199,6 @@ export async function refreshAccessToken(
     );
   }
 
-  /*
-   * CRITICAL:
-   *
-   * The refresh token carries the organization
-   * that the user selected.
-   *
-   * We therefore DO NOT select the first
-   * organization anymore.
-   */
   const authenticatedUser =
     await buildAuthenticatedUser(
       storedToken.userId,
@@ -1188,16 +1228,12 @@ export async function refreshAccessToken(
         await tx.refreshToken.create({
           data: {
             id: crypto.randomUUID(),
-
             tokenHash:
               newRefreshTokenHash,
-
             userId:
               storedToken.userId,
-
             organizationId:
               storedToken.organizationId,
-
             expiresAt:
               newExpiresAt,
           },
@@ -1207,11 +1243,9 @@ export async function refreshAccessToken(
         where: {
           id: storedToken.id,
         },
-
         data: {
           revokedAt:
             new Date(),
-
           replacedByTokenId:
             replacement.id,
         },
@@ -1325,14 +1359,6 @@ export async function switchOrganization(
   const newExpiresAt =
     getRefreshTokenExpiryDate();
 
-  /*
-   * If the current refresh token is supplied,
-   * rotate it as part of the organization switch.
-   *
-   * This prevents the previous organization
-   * session from remaining usable through the
-   * same refresh token.
-   */
   await prisma.$transaction(
     async (tx) => {
       if (currentRefreshToken) {
@@ -1379,15 +1405,11 @@ export async function switchOrganization(
             {
               data: {
                 id: crypto.randomUUID(),
-
                 tokenHash:
                   newRefreshTokenHash,
-
                 userId,
-
                 organizationId:
                   membership.organizationId,
-
                 expiresAt:
                   newExpiresAt,
               },
@@ -1402,7 +1424,6 @@ export async function switchOrganization(
           data: {
             revokedAt:
               new Date(),
-
             replacedByTokenId:
               replacement.id,
           },
@@ -1414,15 +1435,11 @@ export async function switchOrganization(
       await tx.refreshToken.create({
         data: {
           id: crypto.randomUUID(),
-
           tokenHash:
             newRefreshTokenHash,
-
           userId,
-
           organizationId:
             membership.organizationId,
-
           expiresAt:
             newExpiresAt,
         },
@@ -1687,6 +1704,8 @@ export const authService = {
   isStrongPassword,
 
   isValidEmail,
+
+  isEmailDomainConfigured,
 
   hashPassword,
 

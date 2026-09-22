@@ -23,6 +23,7 @@ import superAdminPlatformRouter from "./routes/super-admin-platform.js";
 
 import { generalApiRateLimiter } from "./middleware/rateLimit.js";
 import { securityHeaders } from "./middleware/security.js";
+import invitationsRouter from "./routes/invitations.js";
 
 const app = express();
 
@@ -132,6 +133,10 @@ app.use(
 app.use(
   "/api",
   generalApiRateLimiter,
+);
+app.use(
+  "/api/invitations",
+  invitationsRouter,
 );
 
 /* ============================================================

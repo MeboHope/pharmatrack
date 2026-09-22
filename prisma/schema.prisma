@@ -18,6 +18,7 @@ model Organization {
   updatedAt DateTime           @updatedAt
 
   memberships      OrganizationMembership[]
+  invitations      OrganizationInvitation[]
   drugs            Drug[]
   patients         Patient[]
   suppliers        Supplier[]
@@ -48,8 +49,34 @@ model OrganizationMembership {
   @@index([role])
 }
 
+model OrganizationInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  invitedById    String
+  name           String
+  email          String
+  phone          String?
+  role           UserRole
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("OrganizationInvitationSender", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([expiresAt])
+  @@index([acceptedAt])
+  @@index([revokedAt])
+  @@index([invitedById])
+}
+
 model AuditLog {
-  id             String   @id
+  id             String   @id @default(cuid())
   action         String
   entity         String
   entityId       String?
@@ -69,7 +96,7 @@ model AuditLog {
 }
 
 model DispenseTransaction {
-  id               String            @id
+  id               String            @id @default(cuid())
   transactionNo    String            @unique
   date             DateTime          @default(now())
   patientType      PatientType
@@ -154,7 +181,7 @@ model Patient {
 }
 
 model PharmacySettings {
-  id                String   @id
+  id                String   @id @default(cuid())
   pharmacyName      String
   tagline           String?
   address           String?
@@ -176,7 +203,7 @@ model PharmacySettings {
 }
 
 model PrescriptionItem {
-  id                  String              @id
+  id                  String              @id @default(cuid())
   drugId              String
   drugCode            String
   drugName            String
@@ -224,7 +251,7 @@ model StockAdjustment {
 }
 
 model Supplier {
-  id            String   @id
+  id            String   @id @default(cuid())
   name          String
   contactPerson String
   phone         String
@@ -260,11 +287,13 @@ model User {
 
   memberships OrganizationMembership[]
 
+  sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationSender")
+
   @@index([role])
 }
 
 model EmailVerification {
-  id        String   @id
+  id        String   @id @default(cuid())
   userId    String   @unique
   codeHash  String
   expiresAt DateTime
@@ -278,7 +307,7 @@ model EmailVerification {
 }
 
 model RefreshToken {
-  id                String    @id
+  id                String    @id @default(cuid())
   tokenHash         String    @unique
   userId            String
   organizationId    String?
