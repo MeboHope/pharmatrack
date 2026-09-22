@@ -91,6 +91,30 @@ export interface UpdateOrganizationInput {
   status?: OrganizationStatus;
 }
 
+export interface CreateOrganizationInvitationInput {
+  name: string;
+  email: string;
+  phone?: string;
+  role: OrganizationRole;
+}
+
+export interface OrganizationInvitation {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  role: OrganizationRole;
+  expiresAt: string;
+  acceptedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  invitedBy?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+}
+
 export interface AddOrganizationMemberInput {
   userId: string;
   role: OrganizationRole;
@@ -256,6 +280,13 @@ interface OrganizationMemberResponse {
   message?: string;
   membership?: OrganizationMember;
   data?: OrganizationMember;
+}
+
+interface OrganizationInvitationResponse {
+  success?: boolean;
+  message?: string;
+  invitation?: OrganizationInvitation;
+  data?: OrganizationInvitation;
 }
 
 interface PlatformUsersResponse {
@@ -737,6 +768,55 @@ export const superAdminService = {
 
     return members.map(
       normalizeOrganizationMember,
+    );
+  },
+
+  async createOrganizationInvitation(
+    organizationId: string,
+    input: CreateOrganizationInvitationInput,
+  ): Promise<OrganizationInvitation> {
+    const response =
+      await api.post<OrganizationInvitation>(
+        `/super-admin/organizations/${organizationId}/invitations`,
+        input,
+      ) as unknown as OrganizationInvitationResponse;
+
+    const invitation =
+      response.data ??
+      response.invitation;
+
+    if (!invitation) {
+      throw new Error(
+        "The server did not return the created invitation.",
+      );
+    }
+
+    return invitation;
+  },
+
+  async getOrganizationInvitations(
+    organizationId: string,
+  ): Promise<OrganizationInvitation[]> {
+    const response =
+      await api.get<OrganizationInvitation[]>(
+        `/super-admin/organizations/${organizationId}/invitations`,
+      ) as unknown as {
+        success?: boolean;
+        message?: string;
+        invitations?: OrganizationInvitation[];
+        data?: OrganizationInvitation[];
+      };
+
+    return response.data ?? response.invitations ?? [];
+  },
+
+  async revokeOrganizationInvitation(
+    organizationId: string,
+    invitationId: string,
+  ): Promise<void> {
+    await api.post(
+      `/super-admin/organizations/${organizationId}/invitations/${invitationId}/revoke`,
+      {},
     );
   },
 

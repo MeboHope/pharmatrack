@@ -42,6 +42,7 @@ import {
   superAdminService,
   type Organization,
   type OrganizationMember,
+  type OrganizationInvitation,
   type PlatformUser,
   type SuperAdminAuditLog,
   type SystemStatus,
@@ -79,6 +80,12 @@ interface MemberFormState {
   role: MemberRole;
 }
 
+interface InvitationFormState {
+  name: string;
+  email: string;
+  phone: string;
+}
+
 const emptyOrganizationForm: OrganizationFormState = {
   name: "",
   type: "PHARMACY",
@@ -90,6 +97,12 @@ const emptyOrganizationForm: OrganizationFormState = {
 const emptyMemberForm: MemberFormState = {
   userId: "",
   role: "ADMIN",
+};
+
+const emptyInvitationForm: InvitationFormState = {
+  name: "",
+  email: "",
+  phone: "",
 };
 
 function formatDate(value?: string | Date | null) {
@@ -381,6 +394,20 @@ export function SuperAdminDashboard({
   const [memberSearch, setMemberSearch] =
     useState("");
 
+  const [invitationModalOpen, setInvitationModalOpen] =
+    useState(false);
+
+  const [invitationForm, setInvitationForm] =
+    useState<InvitationFormState>(
+      emptyInvitationForm,
+    );
+
+  const [organizationInvitations, setOrganizationInvitations] =
+    useState<OrganizationInvitation[]>([]);
+
+  const [invitationsLoading, setInvitationsLoading] =
+    useState(false);
+
   /* ============================================================
      AUDIT LOG STATE
      ============================================================ */
@@ -555,6 +582,32 @@ export function SuperAdminDashboard({
     [],
   );
 
+  const loadInvitations = useCallback(
+    async (organizationId: string) => {
+      setInvitationsLoading(true);
+
+      try {
+        const data =
+          await superAdminService.getOrganizationInvitations(
+            organizationId,
+          );
+
+        setOrganizationInvitations(data || []);
+      } catch (loadError) {
+        setOrganizationInvitations([]);
+        setError(
+          getErrorMessage(
+            loadError,
+            "Unable to load organization invitations.",
+          ),
+        );
+      } finally {
+        setInvitationsLoading(false);
+      }
+    },
+    [],
+  );
+
   /* ============================================================
      AUDIT LOGS
      ============================================================ */
@@ -677,11 +730,16 @@ export function SuperAdminDashboard({
       void loadMembers(
         selectedOrganization.id,
       );
+      void loadInvitations(
+        selectedOrganization.id,
+      );
     } else {
       setOrganizationMembers([]);
+      setOrganizationInvitations([]);
     }
   }, [
     selectedOrganization,
+    loadInvitations,
     loadMembers,
   ]);
 
@@ -892,12 +950,19 @@ export function SuperAdminDashboard({
             "Organization updated successfully.",
           );
         } else {
-          await superAdminService.createOrganization(
-            organizationForm,
-          );
+          const createdOrganization =
+            await superAdminService.createOrganization(
+              organizationForm,
+            );
 
+          setSelectedOrganization(
+            createdOrganization,
+          );
+          setInvitationForm({
+            ...emptyInvitationForm,
+          });
           setSuccess(
-            "Organization created successfully.",
+            "Organization created successfully. Invite its initial Administrator to complete onboarding.",
           );
         }
 
@@ -906,6 +971,10 @@ export function SuperAdminDashboard({
         );
 
         await loadOrganizations();
+
+        if (!editingOrganization) {
+          setInvitationModalOpen(true);
+        }
       } catch (submitError) {
         setError(
           getErrorMessage(
@@ -972,6 +1041,129 @@ export function SuperAdminDashboard({
         setActionLoading(false);
       }
     };
+
+  /* ============================================================
+     ORGANIZATION INVITATION ACTIONS
+     ============================================================ */
+
+  const openInvitationModal = (
+    organization?: Organization,
+  ) => {
+    clearMessages();
+
+    if (organization) {
+      setSelectedOrganization(organization);
+    }
+
+    setInvitationForm({
+      ...emptyInvitationForm,
+    });
+    setInvitationModalOpen(true);
+  };
+
+  const handleSendInvitation = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+    clearMessages();
+
+    if (!selectedOrganization) {
+      setError("Select an organization first.");
+      return;
+    }
+
+    const name = invitationForm.name.trim();
+    const email = invitationForm.email.trim().toLowerCase();
+
+    if (!name) {
+      setError("Administrator name is required.");
+      return;
+    }
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setError("Enter a valid administrator email address.");
+      return;
+    }
+
+    if (selectedOrganization.status === "SUSPENDED") {
+      setError("A suspended organization cannot receive invitations.");
+      return;
+    }
+
+    setActionLoading(true);
+
+    try {
+      await superAdminService.createOrganizationInvitation(
+        selectedOrganization.id,
+        {
+          name,
+          email,
+          phone: invitationForm.phone.trim() || undefined,
+          role: "ADMIN",
+        },
+      );
+
+      setSuccess(
+        `Administrator invitation sent to ${email}.`,
+      );
+      setInvitationModalOpen(false);
+      setInvitationForm({
+        ...emptyInvitationForm,
+      });
+      await loadInvitations(selectedOrganization.id);
+      await loadMembers(selectedOrganization.id);
+    } catch (invitationError) {
+      setError(
+        getErrorMessage(
+          invitationError,
+          "Unable to send administrator invitation.",
+        ),
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRevokeInvitation = async (
+    invitation: OrganizationInvitation,
+  ) => {
+    if (!selectedOrganization) {
+      return;
+    }
+
+    clearMessages();
+
+    const confirmed = window.confirm(
+      `Revoke the invitation for ${invitation.name} (${invitation.email})?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setActionLoading(true);
+
+    try {
+      await superAdminService.revokeOrganizationInvitation(
+        selectedOrganization.id,
+        invitation.id,
+      );
+
+      setSuccess(
+        "Organization invitation revoked successfully.",
+      );
+      await loadInvitations(selectedOrganization.id);
+    } catch (revokeError) {
+      setError(
+        getErrorMessage(
+          revokeError,
+          "Unable to revoke organization invitation.",
+        ),
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   /* ============================================================
      MEMBER ACTIONS
@@ -1839,6 +2031,20 @@ export function SuperAdminDashboard({
               <button
                 type="button"
                 onClick={() =>
+                  openInvitationModal(
+                    selectedOrganization,
+                  )
+                }
+                disabled={selectedOrganization.status === "SUSPENDED"}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#22577A]/20 bg-[#22577A]/5 px-3.5 py-2 text-xs font-semibold text-[#22577A] hover:bg-[#22577A]/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Mail size={14} />
+                Invite administrator
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
                   openMemberModal(
                     selectedOrganization,
                   )
@@ -2105,6 +2311,112 @@ export function SuperAdminDashboard({
               </table>
             </div>
           )}
+
+          <div className="border-t border-slate-200 p-5">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">
+                  Organization invitations
+                </h4>
+                <p className="mt-1 text-xs text-slate-500">
+                  Track invitations sent to administrators and other organization users.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => openInvitationModal(selectedOrganization)}
+                disabled={selectedOrganization.status === "SUSPENDED"}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Mail size={14} />
+                Invite administrator
+              </button>
+            </div>
+
+            {invitationsLoading ? (
+              <div className="flex min-h-20 items-center justify-center text-xs text-slate-500">
+                <Loader2 size={15} className="mr-2 animate-spin" />
+                Loading invitations...
+              </div>
+            ) : organizationInvitations.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center text-xs text-slate-500">
+                No invitations have been sent for this organization yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50/80 text-left">
+                      <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Invitee</th>
+                      <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Role</th>
+                      <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Status</th>
+                      <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Expires</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-wide text-slate-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {organizationInvitations.map((invitation) => {
+                      const expired = new Date(invitation.expiresAt).getTime() <= Date.now();
+                      const accepted = Boolean(invitation.acceptedAt);
+                      const revoked = Boolean(invitation.revokedAt);
+                      const status = accepted
+                        ? "Accepted"
+                        : revoked
+                          ? "Revoked"
+                          : expired
+                            ? "Expired"
+                            : "Pending";
+
+                      return (
+                        <tr key={invitation.id} className="hover:bg-slate-50/70">
+                          <td className="px-4 py-3">
+                            <p className="text-sm font-semibold text-slate-900">{invitation.name}</p>
+                            <p className="text-xs text-slate-500">{invitation.email}</p>
+                            {invitation.phone && (
+                              <p className="text-[11px] text-slate-400">{invitation.phone}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-xs font-semibold text-slate-600">
+                            {formatRole(invitation.role)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={[
+                              "inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide",
+                              status === "Pending"
+                                ? "bg-amber-50 text-amber-700"
+                                : status === "Accepted"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-slate-100 text-slate-600",
+                            ].join(" ")}>
+                              {status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-500">
+                            {formatDateTime(invitation.expiresAt)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {!accepted && !revoked && !expired ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleRevokeInvitation(invitation)}
+                                disabled={actionLoading}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                              >
+                                <XCircle size={13} />
+                                Revoke
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </section>
       )}
     </div>
@@ -3002,42 +3314,34 @@ export function SuperAdminDashboard({
 
   const renderSystemStatus =
     () => {
-      type SystemStatusServiceView = {
-        status?: string;
-        responseTimeMs?: number;
-        message?: string;
-      };
-
-      const services = systemStatus?.services as
-        | {
-            api?: SystemStatusServiceView;
-            database?: SystemStatusServiceView;
-            reports?: SystemStatusServiceView;
-          }
-        | undefined;
-
-      const serviceEntries = services
+      const serviceEntries = systemStatus
         ? [
             {
               name: "API service",
               description:
                 "Application programming interface",
               icon: Activity,
-              service: services.api,
+              service:
+                systemStatus
+                  .services.api,
             },
             {
               name: "Database",
               description:
                 "Persistent platform data",
               icon: Database,
-              service: services.database,
+              service:
+                systemStatus
+                  .services.database,
             },
             {
               name: "Reports service",
               description:
                 "Reporting and analytics availability",
               icon: Activity,
-              service: services.reports,
+              service:
+                systemStatus
+                  .services.reports,
             },
           ]
         : [];
@@ -3223,19 +3527,19 @@ export function SuperAdminDashboard({
                                 className={[
                                   "h-2 w-2 rounded-full",
                                   getStatusDotClasses(
-                                    service?.status,
+                                    service.status,
                                   ),
                                 ].join(" ")}
                               />
 
                               <span className="text-xs font-semibold text-slate-700">
                                 {getSystemStatusLabel(
-                                  service?.status,
+                                  service.status,
                                 )}
                               </span>
                             </div>
 
-                            {typeof service?.responseTimeMs ===
+                            {typeof service.responseTimeMs ===
                               "number" && (
                               <span className="text-[10px] font-semibold text-slate-500">
                                 {
@@ -3246,7 +3550,7 @@ export function SuperAdminDashboard({
                             )}
                           </div>
 
-                          {service?.message && (
+                          {service.message && (
                             <p className="mt-2 text-[11px] leading-5 text-slate-500">
                               {
                                 service.message
@@ -3353,8 +3657,10 @@ export function SuperAdminDashboard({
                     <p className="mt-2 text-lg font-bold text-slate-900">
                       {systemStatus
                         ? getSystemStatusLabel(
-                            systemStatus.services?.database
-                              ?.status,
+                            systemStatus
+                              .services
+                              .database
+                              .status,
                           )
                         : "—"}
                     </p>
@@ -3950,6 +4256,150 @@ export function SuperAdminDashboard({
           </div>
         </div>
       )}
+
+      {/* ========================================================
+          INVITE ORGANIZATION ADMINISTRATOR MODAL
+          ======================================================== */}
+
+      {invitationModalOpen &&
+        selectedOrganization && (
+          <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-200 p-5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#22577A]/8 text-[#22577A]">
+                      <Mail size={17} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">
+                        Invite organization administrator
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Send a secure invitation for {selectedOrganization.name}.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setInvitationModalOpen(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Close invitation dialog"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form
+                onSubmit={handleSendInvitation}
+                className="space-y-5 p-5"
+              >
+                <div className="rounded-xl border border-[#22577A]/10 bg-[#22577A]/5 p-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck size={18} className="mt-0.5 shrink-0 text-[#22577A]" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        Initial administrator access
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        The invitee will receive an email and create their own secure password. Their organization role will automatically be Administrator.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                    Administrator name
+                  </label>
+                  <input
+                    value={invitationForm.name}
+                    onChange={(event) =>
+                      setInvitationForm((previous) => ({
+                        ...previous,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Jane Wanjiku"
+                    required
+                    autoComplete="name"
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 text-sm outline-none focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                    Administrator email
+                  </label>
+                  <input
+                    type="email"
+                    value={invitationForm.email}
+                    onChange={(event) =>
+                      setInvitationForm((previous) => ({
+                        ...previous,
+                        email: event.target.value,
+                      }))
+                    }
+                    placeholder="administrator@example.com"
+                    required
+                    autoComplete="email"
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 text-sm outline-none focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                    Phone <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
+                  <input
+                    value={invitationForm.phone}
+                    onChange={(event) =>
+                      setInvitationForm((previous) => ({
+                        ...previous,
+                        phone: event.target.value,
+                      }))
+                    }
+                    placeholder="+254..."
+                    autoComplete="tel"
+                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 text-sm outline-none focus:border-[#22577A] focus:ring-2 focus:ring-[#22577A]/10"
+                  />
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+                  <strong className="text-slate-700">Role:</strong> Administrator. The invitation expires after 72 hours and can be revoked by the Super Administrator before it is accepted.
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setInvitationModalOpen(false)}
+                    className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={
+                      actionLoading ||
+                      selectedOrganization.status === "SUSPENDED"
+                    }
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#22577A] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#1B4865] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {actionLoading ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Mail size={16} />
+                    )}
+                    Send administrator invitation
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
       {/* ========================================================
           ADD MEMBER MODAL
