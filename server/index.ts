@@ -25,6 +25,8 @@ import { generalApiRateLimiter } from "./middleware/rateLimit.js";
 import { securityHeaders } from "./middleware/security.js";
 import invitationsRouter from "./routes/invitations.js";
 
+import { verifyPassword } from "./services/auth.js";
+
 const app = express();
 
 const PORT = Number(process.env.API_PORT || 4000);
@@ -134,6 +136,7 @@ app.use(
   "/api",
   generalApiRateLimiter,
 );
+
 app.use(
   "/api/invitations",
   invitationsRouter,
@@ -205,6 +208,234 @@ app.get(
         database: "disconnected",
         timestamp:
           new Date().toISOString(),
+      });
+    }
+  },
+);
+
+/* ============================================================
+   TEMPORARY AUTHENTICATION DIAGNOSTIC
+   ============================================================
+
+   PURPOSE:
+   This endpoint is temporary and is only being used to
+   diagnose the current production login problem.
+
+   It never returns:
+   - the supplied password
+   - the stored password hash
+   - JWT_SECRET
+   - DATABASE_URL
+   - access tokens
+   - refresh tokens
+
+   It requires:
+       AUTH_DIAGNOSTIC_KEY
+
+   Vercel environment variable.
+
+   Request:
+       POST /api/diagnostics/auth
+
+   Headers:
+       x-diagnostic-key: <temporary diagnostic key>
+
+   Body:
+       {
+         "email": "...",
+         "password": "..."
+       }
+
+   IMPORTANT:
+   Remove this endpoint after the production login problem
+   has been identified.
+   ============================================================ */
+
+app.post(
+  "/api/diagnostics/auth",
+  async (request, response) => {
+    const configuredDiagnosticKey =
+      process.env.AUTH_DIAGNOSTIC_KEY;
+
+    if (
+      !configuredDiagnosticKey
+    ) {
+      response.status(404).json({
+        success: false,
+        message:
+          "Diagnostic endpoint is not enabled.",
+      });
+
+      return;
+    }
+
+    const suppliedDiagnosticKey =
+      request.header(
+        "x-diagnostic-key",
+      );
+
+    if (
+      !suppliedDiagnosticKey ||
+      suppliedDiagnosticKey !==
+        configuredDiagnosticKey
+    ) {
+      response.status(404).json({
+        success: false,
+        message:
+          "Diagnostic endpoint is not available.",
+      });
+
+      return;
+    }
+
+    const {
+      email,
+      password,
+    } = request.body ?? {};
+
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string"
+    ) {
+      response.status(400).json({
+        success: false,
+        message:
+          "Email and password are required.",
+      });
+
+      return;
+    }
+
+    const normalizedEmail =
+      email.trim().toLowerCase();
+
+    try {
+      const user =
+        await prisma.user.findUnique({
+          where: {
+            email: normalizedEmail,
+          },
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            isVerified: true,
+            passwordHash: true,
+          },
+        });
+
+      if (!user) {
+        response.json({
+          success: true,
+          diagnostic: {
+            userFound: false,
+            passwordVerification:
+              false,
+          },
+        });
+
+        return;
+      }
+
+      const hashParts =
+        user.passwordHash.split(":");
+
+      const salt =
+        hashParts[0] ?? "";
+
+      const key =
+        hashParts[1] ?? "";
+
+      let passwordVerification =
+        false;
+
+      try {
+        passwordVerification =
+          verifyPassword(
+            password,
+            user.passwordHash,
+          );
+      } catch {
+        passwordVerification =
+          false;
+      }
+
+      const membershipCount =
+        await prisma.organizationMembership.count(
+          {
+            where: {
+              userId: user.id,
+            },
+          },
+        );
+
+      const activeMembershipCount =
+        await prisma.organizationMembership.count(
+          {
+            where: {
+              userId: user.id,
+              organization: {
+                status: "ACTIVE",
+              },
+            },
+          },
+        );
+
+      response.json({
+        success: true,
+
+        diagnostic: {
+          userFound: true,
+
+          emailMatchesRequested:
+            user.email ===
+            normalizedEmail,
+
+          role: user.role,
+
+          isVerified:
+            user.isVerified,
+
+          passwordHash: {
+            length:
+              user.passwordHash.length,
+
+            hasColon:
+              hashParts.length === 2,
+
+            saltLength:
+              salt.length,
+
+            keyLength:
+              key.length,
+
+            expectedScryptFormat:
+              salt.length === 32 &&
+              key.length === 128,
+          },
+
+          passwordVerification,
+
+          membershipCount,
+
+          activeMembershipCount,
+
+          environment: {
+            vercel:
+              process.env.VERCEL === "1",
+          },
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Authentication diagnostic failed:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message:
+          "Authentication diagnostic failed.",
       });
     }
   },
