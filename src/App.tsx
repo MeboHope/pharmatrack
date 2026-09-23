@@ -465,7 +465,9 @@ export default function App() {
           !isSuperAdmin &&
           activeTab !== "dispensing"
         ) {
-          setActiveTab("dispensing");
+          setActiveTab(
+            "dispensing",
+          );
         }
       }
     };
@@ -1114,16 +1116,11 @@ export default function App() {
   /*
    * SUPER ADMIN APPLICATION
    *
-   * IMPORTANT:
    * Super Admin receives its own complete
    * application shell from SuperAdminDashboard.
    *
    * The normal Sidebar is deliberately NOT
    * rendered here.
-   *
-   * This prevents the normal tenant sidebar
-   * from appearing underneath/behind the
-   * Super Admin sidebar.
    */
   if (isSuperAdmin) {
     return (
@@ -1141,9 +1138,16 @@ export default function App() {
    * ADMIN / PHARMACIST / CLINICIAN users
    * continue using the normal pharmacy/clinic
    * application shell.
+   *
+   * IMPORTANT LAYOUT:
+   *
+   * The shell is fixed to the viewport.
+   * The main content owns the vertical scroll.
+   * The sidebar therefore remains visible while
+   * long pages scroll independently.
    */
   return (
-    <div className="flex min-h-screen bg-slate-100 font-sans antialiased text-slate-800">
+    <div className="flex h-screen min-h-0 overflow-hidden bg-slate-100 font-sans antialiased text-slate-800">
       <Sidebar
         activeTab={activeTab}
         setActiveTab={
@@ -1170,7 +1174,7 @@ export default function App() {
         }
       />
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         {dataError && (
           <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
             {dataError}

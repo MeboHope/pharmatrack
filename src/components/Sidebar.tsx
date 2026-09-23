@@ -286,8 +286,11 @@ export function Sidebar({
     organizations.length > 1;
 
   return (
-    <aside className="flex h-screen w-72 shrink-0 flex-col overflow-hidden bg-[#22577A] text-white shadow-xl">
-      <div className="border-b border-white/10 px-5 py-5">
+    <aside className="flex h-full w-72 shrink-0 flex-col overflow-hidden bg-[#22577A] text-white shadow-xl">
+      {/* =====================================================
+          BRAND / HEADER
+          ===================================================== */}
+      <div className="shrink-0 border-b border-white/10 px-5 py-5">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
             <ShieldCheck className="h-6 w-6 text-[#22577A]" />
@@ -305,7 +308,10 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="border-b border-white/10 px-4 py-4">
+      {/* =====================================================
+          ORGANIZATION / PLATFORM CONTEXT
+          ===================================================== */}
+      <div className="shrink-0 border-b border-white/10 px-4 py-4">
         {isSuperAdmin ? (
           <div className="rounded-xl border border-white/15 bg-white/10 p-3">
             <div className="flex items-center gap-3">
@@ -370,7 +376,8 @@ export function Sidebar({
 
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                    Current {organizationTypeLabel}
+                    Current{" "}
+                    {organizationTypeLabel}
                   </p>
 
                   <p className="truncate text-sm font-semibold text-white">
@@ -500,7 +507,14 @@ export function Sidebar({
         )}
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+      {/* =====================================================
+          NAVIGATION
+
+          This is intentionally the flexible scroll area.
+          Header, organization card and user footer remain
+          fixed while navigation can scroll when necessary.
+          ===================================================== */}
+      <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4">
         <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-white/45">
           Main Menu
         </p>
@@ -556,7 +570,13 @@ export function Sidebar({
         </div>
       </nav>
 
-      <div className="border-t border-white/10 p-3">
+      {/* =====================================================
+          CURRENT USER / SIGN OUT
+
+          shrink-0 ensures this section never gets pushed
+          out of view by a long navigation list.
+          ===================================================== */}
+      <div className="shrink-0 border-t border-white/10 p-3">
         {currentUser ? (
           <div className="rounded-xl bg-white/10 p-3">
             <div className="flex items-center gap-3">
