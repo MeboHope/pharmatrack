@@ -195,7 +195,7 @@ function FeatureDetails() {
               aria-label="PharmaTrack home"
             >
               <img
-                src="/logo/logo.png"
+                src="/logo/logo-color.png"
                 alt="PharmaTrack"
                 className="h-12 w-12 shrink-0 object-contain drop-shadow-sm"
               />
@@ -263,7 +263,7 @@ function FeatureDetails() {
             aria-label="PharmaTrack home"
           >
             <img
-              src="/logo/logo.png"
+              src="/logo/logo-color.png"
               alt="PharmaTrack"
               className="h-12 w-12 shrink-0 object-contain drop-shadow-sm"
             />

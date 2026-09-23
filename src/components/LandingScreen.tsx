@@ -414,15 +414,22 @@ const LandingScreen: React.FC<LandingScreenProps> = ({
       ========================================================= */}
       <section
         id="home"
-        className="relative overflow-hidden bg-gradient-to-br from-[#22577A] via-[#1D506D] to-[#173F57] pt-28"
+        className="relative overflow-hidden pt-28"
       >
+        <div
+          className="pointer-events-none absolute inset-0 bg-cover bg-center"
+          style={{ backgroundImage: "url('/hero/pharmacy-hero.jpg')" }}
+        />
+
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#12324A] via-[#173F57]/90 to-[#1D506D]/55" />
+
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-[#80ED99]/10 blur-3xl" />
 
           <div className="absolute -bottom-48 -left-40 h-[32rem] w-[32rem] rounded-full bg-sky-300/10 blur-3xl" />
 
           <div
-            className="absolute inset-0 opacity-[0.06]"
+            className="absolute inset-0 opacity-[0.05]"
             style={{
               backgroundImage:
                 "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
