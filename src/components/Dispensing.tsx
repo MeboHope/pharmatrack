@@ -1,4 +1,3 @@
-
 import React, {
   useMemo,
   useState,
@@ -17,31 +16,32 @@ import {
 
 import type {
   DispenseTransaction,
-  Drug,
   HealthcareFrequency,
   HealthcareRoute,
   PatientRecord,
   PharmacySettings,
-  PrescriptionItem,
 } from '../types';
+
+import type { InventoryProduct } from './Inventory';
 
 import {
   transactionService,
   type CreateTransactionInput,
+  type CreateDispenseItemInput,
 } from '../services/transactions';
 
 interface DispensingProps {
-  drugs: Drug[];
+  products: InventoryProduct[];
   settings: PharmacySettings;
   transactions: DispenseTransaction[];
   patients: PatientRecord[];
   onCompleteTransaction: (
     transaction: DispenseTransaction,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 interface CartItem {
-  drug: Drug;
+  product: InventoryProduct;
   qty: number;
   frequency: HealthcareFrequency;
   route: HealthcareRoute;
@@ -77,32 +77,62 @@ const routes: HealthcareRoute[] = [
   'Sublingual',
 ];
 
-const createTransactionId = (
-  transactions: DispenseTransaction[],
-) => {
-  const numbers = transactions
-    .map((transaction) => {
-      const match =
-        transaction.id.match(/(\d+)$/);
+const getDisplayPrice = (
+  product: InventoryProduct,
+): number => {
+  const activeBatches =
+    product.batches?.filter(
+      (batch) =>
+        batch.status !== 'INACTIVE' &&
+        batch.qty > 0 &&
+        new Date(batch.expiryDate).getTime() >=
+          Date.now(),
+    ) ?? [];
 
-      return match
-        ? Number(match[1])
-        : 0;
-    })
-    .filter((number) =>
-      Number.isFinite(number),
-    );
+  if (!activeBatches.length) {
+    return 0;
+  }
 
-  const next =
-    Math.max(0, ...numbers) + 1;
+  activeBatches.sort(
+    (a, b) =>
+      new Date(a.expiryDate).getTime() -
+      new Date(b.expiryDate).getTime(),
+  );
 
-  return `TXN-${String(next).padStart(4, '0')}`;
+  return Number(
+    activeBatches[0].sellingPrice || 0,
+  );
+};
+
+const getEarliestBatchLabel = (
+  product: InventoryProduct,
+): string => {
+  const activeBatches =
+    product.batches?.filter(
+      (batch) =>
+        batch.status !== 'INACTIVE' &&
+        batch.qty > 0 &&
+        new Date(batch.expiryDate).getTime() >=
+          Date.now(),
+    ) ?? [];
+
+  if (!activeBatches.length) {
+    return 'No active batch';
+  }
+
+  activeBatches.sort(
+    (a, b) =>
+      new Date(a.expiryDate).getTime() -
+      new Date(b.expiryDate).getTime(),
+  );
+
+  return activeBatches[0].batchNo;
 };
 
 export const Dispensing: React.FC<
   DispensingProps
 > = ({
-  drugs = [],
+  products = [],
   settings,
   transactions = [],
   patients = [],
@@ -162,52 +192,58 @@ export const Dispensing: React.FC<
   const [showRecent, setShowRecent] =
     useState(false);
 
-  const [selectedDrug, setSelectedDrug] =
-    useState<Drug | null>(null);
+  const [selectedProduct, setSelectedProduct] =
+    useState<InventoryProduct | null>(null);
 
   const [selectedQty, setSelectedQty] =
     useState(1);
 
-  const filteredDrugs = useMemo(() => {
+  const filteredProducts = useMemo(() => {
     const term =
       search.trim().toLowerCase();
 
-    if (!term) {
-      return drugs
-        .filter(
-          (drug) =>
-            drug.qty > 0 &&
-            drug.status !== 'Expired',
-        )
-        .slice(0, 20);
-    }
-
-    return drugs
-      .filter((drug) => {
+    const availableProducts =
+      products.filter((product) => {
         if (
-          drug.qty <= 0 ||
-          drug.status === 'Expired'
+          product.status === 'INACTIVE' ||
+          (product.totalQuantity || 0) <= 0
         ) {
           return false;
         }
 
+        const hasUsableBatch =
+          product.batches?.some(
+            (batch) =>
+              batch.status !== 'INACTIVE' &&
+              batch.qty > 0 &&
+              new Date(
+                batch.expiryDate,
+              ).getTime() >= Date.now(),
+          ) ?? false;
+
+        return hasUsableBatch;
+      });
+
+    if (!term) {
+      return availableProducts.slice(0, 20);
+    }
+
+    return availableProducts
+      .filter((product) => {
         return (
-          drug.name
+          product.name
             .toLowerCase()
             .includes(term) ||
-          drug.genericName
+          (product.genericName || '')
             .toLowerCase()
             .includes(term) ||
-          drug.code
-            .toLowerCase()
-            .includes(term) ||
-          drug.batchNo
+          product.code
             .toLowerCase()
             .includes(term)
         );
       })
       .slice(0, 20);
-  }, [drugs, search]);
+  }, [products, search]);
 
   const subtotal = useMemo(
     () =>
@@ -215,7 +251,7 @@ export const Dispensing: React.FC<
         (total, item) =>
           total +
           item.qty *
-            Number(item.drug.sellingPrice || 0),
+            getDisplayPrice(item.product),
         0,
       ),
     [cart],
@@ -241,38 +277,51 @@ export const Dispensing: React.FC<
         )
       : 0;
 
-  const selectedPatient = patients.find(
-    (patient) =>
-      patient.id === patientId,
-  );
-
-  const addDrugToCart = (
-    drug: Drug,
+  const addProductToCart = (
+    product: InventoryProduct,
     quantity = 1,
   ) => {
     setError('');
 
     if (
-      drug.status === 'Expired' ||
-      drug.qty <= 0
+      product.status === 'INACTIVE' ||
+      (product.totalQuantity || 0) <= 0
     ) {
       setError(
-        `${drug.name} cannot be dispensed because it is unavailable.`,
+        `${product.name} cannot be dispensed because it is unavailable.`,
       );
       return;
     }
 
+    const usableQuantity =
+      product.batches?.reduce(
+        (total, batch) => {
+          if (
+            batch.status === 'INACTIVE' ||
+            batch.qty <= 0 ||
+            new Date(
+              batch.expiryDate,
+            ).getTime() < Date.now()
+          ) {
+            return total;
+          }
+
+          return total + batch.qty;
+        },
+        0,
+      ) ?? 0;
+
     const existing = cart.find(
       (item) =>
-        item.drug.id === drug.id,
+        item.product.id === product.id,
     );
 
     const newQuantity =
       (existing?.qty || 0) + quantity;
 
-    if (newQuantity > drug.qty) {
+    if (newQuantity > usableQuantity) {
       setError(
-        `Only ${drug.qty} ${drug.unit} of ${drug.name} are available.`,
+        `Only ${usableQuantity} ${product.unit || 'units'} of ${product.name} are currently available from usable batches.`,
       );
       return;
     }
@@ -280,7 +329,7 @@ export const Dispensing: React.FC<
     if (existing) {
       setCart((current) =>
         current.map((item) =>
-          item.drug.id === drug.id
+          item.product.id === product.id
             ? {
                 ...item,
                 qty: newQuantity,
@@ -292,7 +341,7 @@ export const Dispensing: React.FC<
       setCart((current) => [
         ...current,
         {
-          drug,
+          product,
           qty: quantity,
           frequency:
             'OD (Once daily)',
@@ -305,17 +354,17 @@ export const Dispensing: React.FC<
     }
 
     setSearch('');
-    setSelectedDrug(null);
+    setSelectedProduct(null);
     setSelectedQty(1);
   };
 
   const updateCartItem = (
-    drugId: string,
+    productId: string,
     changes: Partial<CartItem>,
   ) => {
     setCart((current) =>
       current.map((item) =>
-        item.drug.id === drugId
+        item.product.id === productId
           ? {
               ...item,
               ...changes,
@@ -326,12 +375,12 @@ export const Dispensing: React.FC<
   };
 
   const removeCartItem = (
-    drugId: string,
+    productId: string,
   ) => {
     setCart((current) =>
       current.filter(
         (item) =>
-          item.drug.id !== drugId,
+          item.product.id !== productId,
       ),
     );
   };
@@ -364,6 +413,7 @@ export const Dispensing: React.FC<
     setMpesaCode('');
     setCart([]);
     setError('');
+    setSuccess('');
   };
 
   const handleComplete = async () => {
@@ -416,35 +466,22 @@ export const Dispensing: React.FC<
     setSaving(true);
 
     try {
-      const items: PrescriptionItem[] =
+      const items =
         cart.map((item) => ({
-          drugId: item.drug.id,
-          drugCode: item.drug.code,
-          drugName: item.drug.name,
-          batchNo: item.drug.batchNo,
-          expiryDate:
-            item.drug.expiryDate,
-          availableQty: item.drug.qty,
+          productId:
+            item.product.id,
           qty: item.qty,
-          unitPrice:
-            Number(
-              item.drug.sellingPrice,
-            ),
           frequency:
             item.frequency,
           route: item.route,
-          duration: item.duration,
+          duration:
+            item.duration,
           durationUnit:
             item.durationUnit,
           specialInstructions:
-            item.specialInstructions ||
+            item.specialInstructions.trim() ||
             undefined,
-          lineTotal:
-            item.qty *
-            Number(
-              item.drug.sellingPrice,
-            ),
-        }));
+        } as CreateDispenseItemInput));
 
       const input: CreateTransactionInput =
         {
@@ -465,17 +502,11 @@ export const Dispensing: React.FC<
             diagnosis.trim() ||
             undefined,
           items,
-          subtotal,
           discount: safeDiscount,
-          totalAmount,
           paymentMethod,
           cashTendered:
             paymentMethod === 'Cash'
               ? Number(cashTendered)
-              : undefined,
-          changeAmount:
-            paymentMethod === 'Cash'
-              ? changeAmount
               : undefined,
           mpesaCode:
             paymentMethod === 'M-Pesa'
@@ -488,24 +519,12 @@ export const Dispensing: React.FC<
           input,
         );
 
-      const transaction: DispenseTransaction =
-        {
-          ...created,
-          id:
-            created.id ||
-            createTransactionId(
-              transactions,
-            ),
-        };
-
-      onCompleteTransaction(
-        transaction,
+      await onCompleteTransaction(
+        created,
       );
 
       setSuccess(
-        `Transaction ${
-          transaction.id
-        } completed successfully.`,
+        `Transaction ${created.transactionNo || created.id} completed successfully.`,
       );
 
       setCart([]);
@@ -752,48 +771,66 @@ export const Dispensing: React.FC<
             </div>
 
             {(search ||
-              filteredDrugs.length > 0) && (
+              filteredProducts.length > 0) && (
               <div className="mt-3 max-h-72 overflow-y-auto border border-slate-200 rounded-lg divide-y">
-                {filteredDrugs.map(
-                  (drug) => (
-                    <button
-                      key={drug.id}
-                      type="button"
-                      onClick={() =>
-                        setSelectedDrug(
-                          drug,
-                        )
-                      }
-                      className="w-full text-left p-3 hover:bg-slate-50"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {drug.name}
-                          </p>
+                {filteredProducts.map(
+                  (product) => {
+                    const price =
+                      getDisplayPrice(
+                        product,
+                      );
 
-                          <p className="text-xs text-slate-500">
-                            {drug.code} ·{' '}
-                            {drug.batchNo}
-                          </p>
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedProduct(
+                            product,
+                          )
+                        }
+                        className="w-full text-left p-3 hover:bg-slate-50"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">
+                              {product.name}
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              {product.code} ·{' '}
+                              {getEarliestBatchLabel(
+                                product,
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-[#22577A]">
+                              {settings.currency}{' '}
+                              {price.toFixed(
+                                2,
+                              )}
+                            </p>
+
+                            <p className="text-xs text-slate-500">
+                              {product.totalQuantity ||
+                                0}{' '}
+                              {product.unit ||
+                                'units'}
+                            </p>
+                          </div>
                         </div>
+                      </button>
+                    );
+                  },
+                )}
 
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-[#22577A]">
-                            {settings.currency}{' '}
-                            {Number(
-                              drug.sellingPrice,
-                            ).toFixed(2)}
-                          </p>
-
-                          <p className="text-xs text-slate-500">
-                            {drug.qty}{' '}
-                            {drug.unit}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  ),
+                {filteredProducts.length ===
+                  0 && (
+                  <div className="p-4 text-center text-sm text-slate-500">
+                    No available medicine found.
+                  </div>
                 )}
               </div>
             )}
@@ -801,7 +838,7 @@ export const Dispensing: React.FC<
         </section>
       </div>
 
-      {selectedDrug && (
+      {selectedProduct && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5">
             <div className="flex items-center justify-between mb-5">
@@ -811,14 +848,14 @@ export const Dispensing: React.FC<
                 </h3>
 
                 <p className="text-xs text-slate-500">
-                  {selectedDrug.name}
+                  {selectedProduct.name}
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={() =>
-                  setSelectedDrug(null)
+                  setSelectedProduct(null)
                 }
                 className="p-1.5 rounded-lg hover:bg-slate-100"
               >
@@ -833,14 +870,14 @@ export const Dispensing: React.FC<
             <input
               type="number"
               min={1}
-              max={selectedDrug.qty}
+              max={selectedProduct.totalQuantity || 0}
               value={selectedQty}
               onChange={(event) =>
                 setSelectedQty(
                   Math.max(
                     1,
                     Math.min(
-                      selectedDrug.qty,
+                      selectedProduct.totalQuantity || 0,
                       Number(
                         event.target.value,
                       ) || 1,
@@ -854,8 +891,8 @@ export const Dispensing: React.FC<
             <button
               type="button"
               onClick={() =>
-                addDrugToCart(
-                  selectedDrug,
+                addProductToCart(
+                  selectedProduct,
                   selectedQty,
                 )
               }
@@ -917,197 +954,231 @@ export const Dispensing: React.FC<
 
               <tbody className="divide-y">
                 {cart.map(
-                  (item) => (
-                    <tr key={item.drug.id}>
-                      <td className="px-5 py-4">
-                        <p className="font-semibold">
-                          {item.drug.name}
-                        </p>
+                  (item) => {
+                    const price =
+                      getDisplayPrice(
+                        item.product,
+                      );
 
-                        <p className="text-xs text-slate-500">
-                          {settings.currency}{' '}
-                          {Number(
-                            item.drug.sellingPrice,
-                          ).toFixed(2)}{' '}
-                          / {item.drug.unit}
-                        </p>
-                      </td>
+                    return (
+                      <tr
+                        key={
+                          item.product.id
+                        }
+                      >
+                        <td className="px-5 py-4">
+                          <p className="font-semibold">
+                            {
+                              item.product
+                                .name
+                            }
+                          </p>
 
-                      <td className="px-3 py-4">
-                        <input
-                          type="number"
-                          min={1}
-                          max={item.drug.qty}
-                          value={item.qty}
-                          onChange={(event) => {
-                            const qty =
-                              Math.max(
-                                1,
-                                Math.min(
-                                  item.drug.qty,
-                                  Number(
-                                    event.target
-                                      .value,
-                                  ) || 1,
-                                ),
-                              );
+                          <p className="text-xs text-slate-500">
+                            {settings.currency}{' '}
+                            {price.toFixed(
+                              2,
+                            )}{' '}
+                            /{' '}
+                            {item.product
+                              .unit ||
+                              'units'}
+                          </p>
+                        </td>
 
-                            updateCartItem(
-                              item.drug.id,
-                              { qty },
-                            );
-                          }}
-                          className="w-20 px-2 py-1.5 border rounded"
-                        />
-                      </td>
-
-                      <td className="px-3 py-4">
-                        <select
-                          value={
-                            item.frequency
-                          }
-                          onChange={(event) =>
-                            updateCartItem(
-                              item.drug.id,
-                              {
-                                frequency:
-                                  event.target
-                                    .value as HealthcareFrequency,
-                              },
-                            )
-                          }
-                          className="px-2 py-1.5 border rounded text-xs"
-                        >
-                          {frequencies.map(
-                            (frequency) => (
-                              <option
-                                key={
-                                  frequency
-                                }
-                                value={
-                                  frequency
-                                }
-                              >
-                                {frequency}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </td>
-
-                      <td className="px-3 py-4">
-                        <select
-                          value={
-                            item.route
-                          }
-                          onChange={(event) =>
-                            updateCartItem(
-                              item.drug.id,
-                              {
-                                route:
-                                  event.target
-                                    .value as HealthcareRoute,
-                              },
-                            )
-                          }
-                          className="px-2 py-1.5 border rounded text-xs"
-                        >
-                          {routes.map(
-                            (route) => (
-                              <option
-                                key={route}
-                                value={route}
-                              >
-                                {route}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </td>
-
-                      <td className="px-3 py-4">
-                        <div className="flex gap-1">
+                        <td className="px-3 py-4">
                           <input
                             type="number"
                             min={1}
-                            value={
-                              item.duration
+                            max={
+                              item.product
+                                .totalQuantity ||
+                              0
                             }
-                            onChange={(event) =>
-                              updateCartItem(
-                                item.drug.id,
-                                {
-                                  duration:
-                                    Math.max(
-                                      1,
-                                      Number(
-                                        event
-                                          .target
-                                          .value,
-                                      ) || 1,
-                                    ),
-                                },
-                              )
-                            }
-                            className="w-16 px-2 py-1.5 border rounded"
-                          />
+                            value={item.qty}
+                            onChange={(event) => {
+                              const qty =
+                                Math.max(
+                                  1,
+                                  Math.min(
+                                    item.product
+                                      .totalQuantity ||
+                                      0,
+                                    Number(
+                                      event
+                                        .target
+                                        .value,
+                                    ) || 1,
+                                  ),
+                                );
 
+                              updateCartItem(
+                                item.product
+                                  .id,
+                                { qty },
+                              );
+                            }}
+                            className="w-20 px-2 py-1.5 border rounded"
+                          />
+                        </td>
+
+                        <td className="px-3 py-4">
                           <select
                             value={
-                              item.durationUnit
+                              item.frequency
                             }
                             onChange={(event) =>
                               updateCartItem(
-                                item.drug.id,
+                                item.product
+                                  .id,
                                 {
-                                  durationUnit:
+                                  frequency:
                                     event.target
-                                      .value,
+                                      .value as HealthcareFrequency,
                                 },
                               )
                             }
                             className="px-2 py-1.5 border rounded text-xs"
                           >
-                            <option>
-                              Days
-                            </option>
-                            <option>
-                              Weeks
-                            </option>
-                            <option>
-                              Months
-                            </option>
+                            {frequencies.map(
+                              (
+                                frequency,
+                              ) => (
+                                <option
+                                  key={
+                                    frequency
+                                  }
+                                  value={
+                                    frequency
+                                  }
+                                >
+                                  {
+                                    frequency
+                                  }
+                                </option>
+                              ),
+                            )}
                           </select>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td className="px-5 py-4 text-right font-bold">
-                        {settings.currency}{' '}
-                        {(
-                          item.qty *
-                          Number(
-                            item.drug
-                              .sellingPrice,
-                          )
-                        ).toFixed(2)}
-                      </td>
+                        <td className="px-3 py-4">
+                          <select
+                            value={
+                              item.route
+                            }
+                            onChange={(event) =>
+                              updateCartItem(
+                                item.product
+                                  .id,
+                                {
+                                  route:
+                                    event.target
+                                      .value as HealthcareRoute,
+                                },
+                              )
+                            }
+                            className="px-2 py-1.5 border rounded text-xs"
+                          >
+                            {routes.map(
+                              (route) => (
+                                <option
+                                  key={route}
+                                  value={
+                                    route
+                                  }
+                                >
+                                  {route}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </td>
 
-                      <td className="px-3 py-4">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removeCartItem(
-                              item.drug.id,
-                            )
-                          }
-                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg"
-                          aria-label="Remove medicine"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ),
+                        <td className="px-3 py-4">
+                          <div className="flex gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              value={
+                                item.duration
+                              }
+                              onChange={(event) =>
+                                updateCartItem(
+                                  item.product
+                                    .id,
+                                  {
+                                    duration:
+                                      Math.max(
+                                        1,
+                                        Number(
+                                          event
+                                            .target
+                                            .value,
+                                        ) ||
+                                          1,
+                                      ),
+                                  },
+                                )
+                              }
+                              className="w-16 px-2 py-1.5 border rounded"
+                            />
+
+                            <select
+                              value={
+                                item.durationUnit
+                              }
+                              onChange={(event) =>
+                                updateCartItem(
+                                  item.product
+                                    .id,
+                                  {
+                                    durationUnit:
+                                      event
+                                        .target
+                                        .value,
+                                  },
+                                )
+                              }
+                              className="px-2 py-1.5 border rounded text-xs"
+                            >
+                              <option>
+                                Days
+                              </option>
+                              <option>
+                                Weeks
+                              </option>
+                              <option>
+                                Months
+                              </option>
+                            </select>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 text-right font-bold">
+                          {settings.currency}{' '}
+                          {(
+                            item.qty * price
+                          ).toFixed(2)}
+                        </td>
+
+                        <td className="px-3 py-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeCartItem(
+                                item.product
+                                  .id,
+                              )
+                            }
+                            className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg"
+                            aria-label="Remove medicine"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  },
                 )}
               </tbody>
             </table>
@@ -1197,7 +1268,7 @@ export const Dispensing: React.FC<
           <div className="space-y-3 text-sm">
             <div className="flex justify-between">
               <span className="text-slate-500">
-                Subtotal
+                Estimated Subtotal
               </span>
 
               <span className="font-semibold">
@@ -1232,7 +1303,7 @@ export const Dispensing: React.FC<
 
             <div className="border-t pt-3 flex justify-between text-lg">
               <span className="font-bold">
-                Total
+                Estimated Total
               </span>
 
               <span className="font-bold text-[#22577A]">
@@ -1245,12 +1316,18 @@ export const Dispensing: React.FC<
               'Cash' && (
               <div className="flex justify-between text-sm text-emerald-700">
                 <span>Change</span>
+
                 <span className="font-bold">
                   {settings.currency}{' '}
                   {changeAmount.toFixed(2)}
                 </span>
               </div>
             )}
+
+            <p className="text-xs text-slate-400">
+              Final prices and stock allocation are
+              calculated securely by the server.
+            </p>
           </div>
 
           <button
@@ -1293,17 +1370,21 @@ export const Dispensing: React.FC<
               <thead className="bg-slate-50 border-b">
                 <tr>
                   <th className="text-left px-5 py-3">
-                    ID
+                    Transaction
                   </th>
+
                   <th className="text-left px-5 py-3">
                     Patient
                   </th>
+
                   <th className="text-left px-5 py-3">
                     Date
                   </th>
+
                   <th className="text-left px-5 py-3">
                     Payment
                   </th>
+
                   <th className="text-right px-5 py-3">
                     Amount
                   </th>
@@ -1321,7 +1402,8 @@ export const Dispensing: React.FC<
                         }
                       >
                         <td className="px-5 py-3 font-semibold text-[#22577A]">
-                          {transaction.id}
+                          {transaction.transactionNo ||
+                            transaction.id}
                         </td>
 
                         <td className="px-5 py-3">
@@ -1331,9 +1413,9 @@ export const Dispensing: React.FC<
                         </td>
 
                         <td className="px-5 py-3 text-slate-500">
-                          {
-                            transaction.date
-                          }
+                          {new Date(
+                            transaction.date,
+                          ).toLocaleString()}
                         </td>
 
                         <td className="px-5 py-3">

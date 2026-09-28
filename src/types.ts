@@ -121,6 +121,7 @@ export interface PatientRecord {
 
 export interface DispenseTransaction {
   id: string;
+  transactionNo: string;
   date: string;
   patientType:
     | "Walk-in Patient"
@@ -154,21 +155,81 @@ export interface Supplier {
   leadTimeDays: number;
 }
 
+/**
+ * Stock adjustment record.
+ *
+ * The new inventory architecture is batch based:
+ *
+ * Product -> DrugBatch -> StockMovement
+ *
+ * Legacy drug fields are retained temporarily because the
+ * application is being migrated away from the original
+ * Drug/StockAdjustment implementation.
+ */
 export interface StockAdjustment {
   id: string;
+
   date: string;
+
+  /**
+   * New inventory architecture.
+   */
+  productId?: string;
+  batchId?: string;
+
+  productName?: string;
+
+  /**
+   * Legacy compatibility fields.
+   */
   drugId: string;
   drugName: string;
+
   batchNo: string;
+
+  /**
+   * Quantity before the adjustment.
+   */
   previousQty: number;
+
+  /**
+   * Final quantity after the adjustment.
+   */
   adjustedQty: number;
+
+  /**
+   * Alias for the final quantity.
+   */
+  resultingQty?: number;
+
+  /**
+   * Signed quantity change.
+   *
+   * Example:
+   * -20 = remove 20 units
+   * +50 = add 50 units
+   */
+  quantityDelta?: number;
+
   type:
     | "Loss / Damage"
     | "Expiry Removal"
     | "Audit Reconciliation"
     | "Return to Supplier";
+
   reason: string;
+
+  notes?: string;
+
+  referenceType?: string;
+
+  referenceId?: string;
+
   adjustedBy: string;
+
+  userId?: string;
+
+  organizationId?: string;
 }
 
 export interface PharmacySettings {

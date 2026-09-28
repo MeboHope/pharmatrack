@@ -1,35 +1,82 @@
-
 import { api } from "./api";
-import type {
-  Drug,
-  PharmacySettings,
-  StockAdjustment,
-} from "../types";
+import type { StockAdjustment } from "../types";
 
 export interface CreateStockAdjustmentInput {
-  drugId: string;
-  adjustedQty: number;
+  productId: string;
+  batchId: string;
+  quantityDelta: number;
   type: StockAdjustment["type"];
   reason: string;
+  notes?: string;
+  referenceType?: string;
+  referenceId?: string;
+}
+
+interface BackendProductSummary {
+  id: string;
+  code?: string;
+  name: string;
+  genericName?: string;
+  unit?: string;
+}
+
+interface BackendBatchSummary {
+  id: string;
+  batchNo: string;
+  expiryDate: string;
+  qty: number;
+  buyingPrice?: number | string;
+  sellingPrice?: number | string;
+  status?: string;
+}
+
+interface BackendUserSummary {
+  id: string;
+  name: string;
+  email: string;
 }
 
 interface BackendStockAdjustment {
   id: string;
   date: string;
-  drugId: string;
-  drugName: string;
-  batchNo: string;
+
+  /**
+   * Legacy compatibility fields.
+   */
+  drugId?: string | null;
+  drugName?: string | null;
+  batchNo?: string | null;
+
+  /**
+   * New batch-based inventory fields.
+   */
+  productId?: string | null;
+  batchId?: string | null;
   previousQty: number;
   adjustedQty: number;
+  quantityDelta?: number | null;
+
   type:
     | "LOSS_DAMAGE"
     | "EXPIRY_REMOVAL"
     | "AUDIT_RECONCILIATION"
     | "RETURN_TO_SUPPLIER";
+
   reason: string;
+  notes?: string | null;
+
   adjustedBy: string;
   userId?: string | null;
+  organizationId?: string | null;
+
+  referenceType?: string | null;
+  referenceId?: string | null;
+
   createdAt?: string;
+
+  Product?: BackendProductSummary | null;
+  Batch?: BackendBatchSummary | null;
+  User?: BackendUserSummary | null;
 }
 
 const adjustmentTypeToApi = (
@@ -76,30 +123,125 @@ const adjustmentTypeFromApi = (
 
 const mapAdjustment = (
   adjustment: BackendStockAdjustment,
-): StockAdjustment => ({
-  id: adjustment.id,
-  date: adjustment.date
-    ? new Date(adjustment.date).toLocaleString("en-GB")
-    : "",
-  drugId: adjustment.drugId,
-  drugName: adjustment.drugName,
-  batchNo: adjustment.batchNo,
-  previousQty: adjustment.previousQty,
-  adjustedQty: adjustment.adjustedQty,
-  type: adjustmentTypeFromApi(adjustment.type),
-  reason: adjustment.reason,
-  adjustedBy: adjustment.adjustedBy,
-});
+): StockAdjustment => {
+  const productId =
+    adjustment.productId ??
+    adjustment.Product?.id ??
+    undefined;
+
+  const batchId =
+    adjustment.batchId ??
+    adjustment.Batch?.id ??
+    undefined;
+
+  const productName =
+    adjustment.Product?.name ??
+    adjustment.drugName ??
+    "";
+
+  const batchNo =
+    adjustment.Batch?.batchNo ??
+    adjustment.batchNo ??
+    "";
+
+  const quantityDelta =
+    adjustment.quantityDelta ??
+    adjustment.adjustedQty -
+      adjustment.previousQty;
+
+  return {
+    id: adjustment.id,
+
+    date: adjustment.date
+      ? new Date(
+          adjustment.date,
+        ).toLocaleString("en-GB")
+      : "",
+
+    /**
+     * New inventory architecture.
+     */
+    productId,
+    batchId,
+    productName,
+
+    previousQty:
+      adjustment.previousQty,
+
+    adjustedQty:
+      adjustment.adjustedQty,
+
+    resultingQty:
+      adjustment.adjustedQty,
+
+    quantityDelta,
+
+    type:
+      adjustmentTypeFromApi(
+        adjustment.type,
+      ),
+
+    reason:
+      adjustment.reason,
+
+    notes:
+      adjustment.notes ??
+      undefined,
+
+    adjustedBy:
+      adjustment.User?.name ??
+      adjustment.adjustedBy,
+
+    userId:
+      adjustment.userId ??
+      adjustment.User?.id ??
+      undefined,
+
+    organizationId:
+      adjustment.organizationId ??
+      undefined,
+
+    referenceType:
+      adjustment.referenceType ??
+      undefined,
+
+    referenceId:
+      adjustment.referenceId ??
+      undefined,
+
+    /**
+     * Legacy-compatible fields retained so
+     * existing consumers do not immediately break.
+     */
+    drugId:
+      adjustment.drugId ??
+      productId ??
+      "",
+
+    drugName:
+      productName,
+
+    batchNo,
+  };
+};
 
 export const stockAdjustmentsService = {
-  async list(): Promise<StockAdjustment[]> {
+  async list(): Promise<
+    StockAdjustment[]
+  > {
     const response =
-      await api.get<BackendStockAdjustment[]>(
+      await api.get<
+        BackendStockAdjustment[]
+      >(
         "/stock-adjustments",
       );
 
-    return Array.isArray(response.data)
-      ? response.data.map(mapAdjustment)
+    return Array.isArray(
+      response.data,
+    )
+      ? response.data.map(
+          mapAdjustment,
+        )
       : [];
   },
 
@@ -107,17 +249,42 @@ export const stockAdjustmentsService = {
     input: CreateStockAdjustmentInput,
   ): Promise<StockAdjustment> {
     const response =
-      await api.post<BackendStockAdjustment>(
+      await api.post<
+        BackendStockAdjustment
+      >(
         "/stock-adjustments",
         {
-          drugId: input.drugId,
-          adjustedQty: input.adjustedQty,
-          type: adjustmentTypeToApi(input.type),
-          reason: input.reason,
+          productId:
+            input.productId,
+
+          batchId:
+            input.batchId,
+
+          quantityDelta:
+            input.quantityDelta,
+
+          type:
+            adjustmentTypeToApi(
+              input.type,
+            ),
+
+          reason:
+            input.reason,
+
+          notes:
+            input.notes,
+
+          referenceType:
+            input.referenceType,
+
+          referenceId:
+            input.referenceId,
         },
       );
 
-    return mapAdjustment(response.data);
+    return mapAdjustment(
+      response.data,
+    );
   },
 };
 

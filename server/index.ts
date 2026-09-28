@@ -20,6 +20,8 @@ import stockReceivingRouter from "./routes/stock-receiving.js";
 import accountRouter from "./routes/account.js";
 import superAdminRouter from "./routes/super-admin.js";
 import superAdminPlatformRouter from "./routes/super-admin-platform.js";
+import productsRouter from "./routes/products.js";
+import inventoryRouter from "./routes/inventory.js";
 
 import { generalApiRateLimiter } from "./middleware/rateLimit.js";
 import { securityHeaders } from "./middleware/security.js";
@@ -141,6 +143,8 @@ app.use(
   "/api/invitations",
   invitationsRouter,
 );
+app.use("/api/products", productsRouter);
+app.use("/api/inventory", inventoryRouter);
 
 /* ============================================================
    API ROOT

@@ -580,6 +580,7 @@ export const initialDrugs: Drug[] = [
 export const initialTransactions: DispenseTransaction[] = [
   {
     id: 'TXN-0003',
+    transactionNo: 'TXN-0003',
     date: '06/05/2026, 15:13',
     patientType: 'Walk-in Patient',
     patientName: 'Mark Wanjala',
@@ -614,6 +615,7 @@ export const initialTransactions: DispenseTransaction[] = [
   },
   {
     id: 'TXN-0002',
+    transactionNo: 'TXN-0002',
     date: '16/04/2026, 10:47',
     patientType: 'Registered Patient',
     patientName: 'Mary Wanjiku Njoroge',
@@ -664,6 +666,7 @@ export const initialTransactions: DispenseTransaction[] = [
   },
   {
     id: 'TXN-0001',
+    transactionNo: 'TXN-0001',
     date: '11/04/2026, 10:47',
     patientType: 'Registered Patient',
     patientName: 'John Kamau Mwangi',

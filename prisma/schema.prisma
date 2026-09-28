@@ -20,6 +20,9 @@ model Organization {
   memberships      OrganizationMembership[]
   invitations      OrganizationInvitation[]
   drugs            Drug[]
+  products         Product[]
+  drugBatches      DrugBatch[]
+  stockMovements   StockMovement[]
   patients         Patient[]
   suppliers        Supplier[]
   transactions     DispenseTransaction[]
@@ -118,15 +121,15 @@ model DispenseTransaction {
   userId           String?
   organizationId   String
 
-  Patient      Patient?     @relation(fields: [patientId], references: [id])
-  User         User?        @relation(fields: [userId], references: [id])
-  Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-
+  Patient          Patient?           @relation(fields: [patientId], references: [id])
+  User             User?              @relation(fields: [userId], references: [id])
+  Organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   PrescriptionItem PrescriptionItem[]
 
   @@index([date])
   @@index([patientId])
   @@index([organizationId])
+  @@index([status])
 }
 
 model Drug {
@@ -148,8 +151,7 @@ model Drug {
   notes           String?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
-
-  organizationId String
+  organizationId  String
 
   Organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   PrescriptionItem PrescriptionItem[]
@@ -157,19 +159,108 @@ model Drug {
   @@index([organizationId])
 }
 
-model Patient {
-  id          String         @id @default(cuid())
-  name        String
-  phone       String
-  email       String?
-  age         Int?
-  gender      PatientGender?
-  address     String?
-  allergies   String?
-  totalVisits Int            @default(0)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+model Product {
+  id             String        @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  genericName    String
+  category       String
+  formulation    String
+  unit           String
+  notes          String?
+  status         ProductStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  batches             DrugBatch[]
+  movements           StockMovement[]
+  stockAdjustments    StockAdjustment[]
+  dispenseAllocations DispenseAllocation[]
+  prescriptionItems   PrescriptionItem[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([name])
+  @@index([genericName])
+  @@index([category])
+  @@index([status])
+}
+
+model DrugBatch {
+  id              String          @id @default(cuid())
+  organizationId  String
+  productId       String
+  batchNo         String
+  manufactureDate DateTime?
+  expiryDate      DateTime
+  initialQty      Int             @default(0)
+  qty             Int             @default(0)
+  buyingPrice     Decimal         @db.Decimal(12, 2)
+  sellingPrice    Decimal         @db.Decimal(12, 2)
+  status          DrugBatchStatus @default(ACTIVE)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  product             Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  movements           StockMovement[]
+  stockAdjustments    StockAdjustment[]
+  dispenseAllocations DispenseAllocation[]
+
+  @@unique([organizationId, productId, batchNo])
+  @@index([organizationId])
+  @@index([productId])
+  @@index([batchNo])
+  @@index([expiryDate])
+  @@index([status])
+  @@index([organizationId, expiryDate])
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  organizationId String
+  productId      String
+  batchId        String
+  type           StockMovementType
+  quantityDelta  Int
+  previousQty    Int
+  resultingQty   Int
+  referenceType  String?
+  referenceId    String?
+  reason         String?
+  notes          String?
+  userId         String?
+  createdAt      DateTime          @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch        DrugBatch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+  @@index([userId])
+}
+
+model Patient {
+  id             String         @id @default(cuid())
+  name           String
+  phone          String
+  email          String?
+  age            Int?
+  gender         PatientGender?
+  address        String?
+  allergies      String?
+  totalVisits    Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   organizationId String
 
   Organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -194,8 +285,7 @@ model PharmacySettings {
   logoUrl           String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-
-  organizationId String @unique
+  organizationId    String   @unique
 
   Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
@@ -204,7 +294,7 @@ model PharmacySettings {
 
 model PrescriptionItem {
   id                  String              @id @default(cuid())
-  drugId              String
+  drugId              String?
   drugCode            String
   drugName            String
   batchNo             String
@@ -219,48 +309,116 @@ model PrescriptionItem {
   specialInstructions String?
   lineTotal           Decimal             @db.Decimal(12, 2)
   transactionId       String
+  productId           String?
 
-  Drug                Drug                @relation(fields: [drugId], references: [id])
-  DispenseTransaction DispenseTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  Drug                Drug?                @relation(fields: [drugId], references: [id])
+  Product             Product?             @relation(fields: [productId], references: [id])
+  DispenseTransaction DispenseTransaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  allocations         DispenseAllocation[]
 
   @@index([drugId])
+  @@index([productId])
   @@index([transactionId])
 }
 
+model DispenseAllocation {
+  id                String   @id @default(cuid())
+  transactionItemId String
+  productId         String
+  batchId           String
+  quantity          Int
+  unitPrice         Decimal  @db.Decimal(12, 2)
+  lineTotal         Decimal  @db.Decimal(12, 2)
+  createdAt         DateTime @default(now())
+
+  transactionItem PrescriptionItem @relation(fields: [transactionItemId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch           DrugBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([transactionItemId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([createdAt])
+}
+
 model StockAdjustment {
-  id             String         @id @default(cuid())
-  date           DateTime       @default(now())
-  drugId         String
-  drugName       String
-  batchNo        String
-  previousQty    Int
-  adjustedQty    Int
-  type           AdjustmentType
-  reason         String
+  id   String   @id @default(cuid())
+  date DateTime @default(now())
+
+  /**
+   * Legacy fields.
+   * These remain nullable so historical StockAdjustment
+   * records created by the original Drug-based system
+   * remain valid during the migration to batch inventory.
+   */
+  drugId   String?
+  drugName String?
+  batchNo  String?
+
+  /**
+   * New batch-based inventory architecture.
+   */
+  productId String?
+  batchId   String?
+
+  /**
+   * Quantity before the adjustment.
+   */
+  previousQty Int
+
+  /**
+   * Quantity after the adjustment.
+   */
+  adjustedQty Int
+
+  /**
+   * Signed quantity change.
+   * Example:
+   * -20 = remove 20 units
+   * +50 = add 50 units
+   */
+  quantityDelta Int?
+
+  type   AdjustmentType
+  reason String
+  notes  String?
+
   adjustedBy     String
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime @default(now())
   userId         String?
   organizationId String
+
+  /**
+   * Optional external/reference information.
+   */
+  referenceType String?
+  referenceId   String?
 
   User         User?        @relation(fields: [userId], references: [id])
   Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
+  Product Product?   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  Batch   DrugBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
   @@index([date])
   @@index([drugId])
   @@index([organizationId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([type])
+  @@index([referenceType, referenceId])
 }
 
 model Supplier {
-  id            String   @id @default(cuid())
-  name          String
-  contactPerson String
-  phone         String
-  email         String
-  address       String
-  leadTimeDays  Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
+  id             String   @id @default(cuid())
+  name           String
+  contactPerson  String
+  phone          String
+  email          String
+  address        String
+  leadTimeDays   Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
   organizationId String
 
   Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -282,12 +440,11 @@ model User {
   AuditLog            AuditLog[]
   DispenseTransaction DispenseTransaction[]
   StockAdjustment     StockAdjustment[]
+  StockMovement       StockMovement[]
   EmailVerification   EmailVerification?
   RefreshToken        RefreshToken[]
-
-  memberships OrganizationMembership[]
-
-  sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationSender")
+  memberships         OrganizationMembership[]
+  sentInvitations     OrganizationInvitation[] @relation("OrganizationInvitationSender")
 
   @@index([role])
 }
@@ -333,6 +490,30 @@ enum OrganizationType {
 enum OrganizationStatus {
   ACTIVE
   SUSPENDED
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DrugBatchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StockMovementType {
+  OPENING_BALANCE
+  RECEIPT
+  DISPENSE
+  ADJUSTMENT
+  LOSS_DAMAGE
+  EXPIRY_REMOVAL
+  RETURN_TO_SUPPLIER
+  CUSTOMER_RETURN
+  TRANSFER_IN
+  TRANSFER_OUT
+  REVERSAL
 }
 
 enum AdjustmentType {

@@ -10,8 +10,11 @@ import {
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { SuperAdminDashboard } from "./components/SuperAdminDashboard";
-import { Inventory } from "./components/Inventory";
-import { AddDrugModal } from "./components/AddDrugModal";
+import {
+  Inventory,
+  type InventoryProduct,
+  type ReceiveStockInput,
+} from "./components/Inventory";
 import { AuthModal } from "./components/AuthModal";
 import { LandingScreen } from "./components/LandingScreen";
 import { LogoutModal } from "./components/LogoutModal";
@@ -52,6 +55,395 @@ import {
   api,
   type ApiResponse,
 } from "./services/api";
+
+interface ProductFormState {
+  code: string;
+  name: string;
+  genericName: string;
+  category: string;
+  formulation: string;
+  unit: string;
+  notes: string;
+  status: "ACTIVE" | "INACTIVE";
+}
+
+interface ProductModalProps {
+  isOpen: boolean;
+  editingProduct: InventoryProduct | null;
+  onClose: () => void;
+  onSave: (
+    product: ProductFormState,
+    editingProduct: InventoryProduct | null,
+  ) => Promise<void>;
+  isSaving: boolean;
+  error: string;
+}
+
+const emptyProductForm: ProductFormState = {
+  code: "",
+  name: "",
+  genericName: "",
+  category: "",
+  formulation: "",
+  unit: "Tablets",
+  notes: "",
+  status: "ACTIVE",
+};
+
+function ProductModal({
+  isOpen,
+  editingProduct,
+  onClose,
+  onSave,
+  isSaving,
+  error,
+}: ProductModalProps) {
+  const [form, setForm] =
+    useState<ProductFormState>(
+      emptyProductForm,
+    );
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (editingProduct) {
+      setForm({
+        code: editingProduct.code ?? "",
+        name: editingProduct.name ?? "",
+        genericName:
+          editingProduct.genericName ?? "",
+        category:
+          editingProduct.category ?? "",
+        formulation:
+          editingProduct.formulation ?? "",
+        unit:
+          editingProduct.unit ||
+          "Tablets",
+        notes:
+          editingProduct.notes ?? "",
+        status:
+          editingProduct.status ===
+          "INACTIVE"
+            ? "INACTIVE"
+            : "ACTIVE",
+      });
+    } else {
+      setForm(emptyProductForm);
+    }
+  }, [
+    isOpen,
+    editingProduct,
+  ]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const updateField = <
+    K extends keyof ProductFormState,
+  >(
+    field: K,
+    value: ProductFormState[K],
+  ) => {
+    setForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  };
+
+  const handleSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+
+    await onSave(
+      {
+        code:
+          form.code.trim(),
+        name:
+          form.name.trim(),
+        genericName:
+          form.genericName.trim(),
+        category:
+          form.category.trim(),
+        formulation:
+          form.formulation.trim(),
+        unit:
+          form.unit.trim() ||
+          "Tablets",
+        notes:
+          form.notes.trim(),
+        status:
+          form.status,
+      },
+      editingProduct,
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                {editingProduct
+                  ? "Edit Product"
+                  : "Add Product"}
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                {editingProduct
+                  ? "Update product master information. Stock and batches are managed separately."
+                  : "Create the medicine/product master record before receiving physical stock."}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-5 p-6"
+        >
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Product Code
+                <span className="ml-1 text-red-500">
+                  *
+                </span>
+              </label>
+
+              <input
+                type="text"
+                required
+                value={form.code}
+                onChange={(event) =>
+                  updateField(
+                    "code",
+                    event.target.value.toUpperCase(),
+                  )
+                }
+                placeholder="e.g. PCM500"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm uppercase outline-none transition focus:border-slate-400"
+              />
+
+              <p className="mt-1.5 text-xs text-slate-400">
+                Must be unique within this organization.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Product Name
+                <span className="ml-1 text-red-500">
+                  *
+                </span>
+              </label>
+
+              <input
+                type="text"
+                required
+                value={form.name}
+                onChange={(event) =>
+                  updateField(
+                    "name",
+                    event.target.value,
+                  )
+                }
+                placeholder="e.g. Paracetamol 500mg"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Generic Name
+              </label>
+
+              <input
+                type="text"
+                value={form.genericName}
+                onChange={(event) =>
+                  updateField(
+                    "genericName",
+                    event.target.value,
+                  )
+                }
+                placeholder="e.g. Paracetamol"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Category
+              </label>
+
+              <input
+                type="text"
+                value={form.category}
+                onChange={(event) =>
+                  updateField(
+                    "category",
+                    event.target.value,
+                  )
+                }
+                placeholder="e.g. Analgesics"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Formulation
+              </label>
+
+              <input
+                type="text"
+                value={form.formulation}
+                onChange={(event) =>
+                  updateField(
+                    "formulation",
+                    event.target.value,
+                  )
+                }
+                placeholder="e.g. Tablet"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Stock Unit
+                <span className="ml-1 text-red-500">
+                  *
+                </span>
+              </label>
+
+              <input
+                type="text"
+                required
+                value={form.unit}
+                onChange={(event) =>
+                  updateField(
+                    "unit",
+                    event.target.value,
+                  )
+                }
+                placeholder="e.g. Tablets"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+
+            {editingProduct && (
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Product Status
+                </label>
+
+                <select
+                  value={form.status}
+                  onChange={(event) =>
+                    updateField(
+                      "status",
+                      event.target.value as
+                        | "ACTIVE"
+                        | "INACTIVE",
+                    )
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                >
+                  <option value="ACTIVE">
+                    Active
+                  </option>
+
+                  <option value="INACTIVE">
+                    Inactive
+                  </option>
+                </select>
+
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Inactive products cannot receive new stock.
+                </p>
+              </div>
+            )}
+
+            <div className="sm:col-span-2">
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                Notes
+              </label>
+
+              <textarea
+                rows={3}
+                value={form.notes}
+                onChange={(event) =>
+                  updateField(
+                    "notes",
+                    event.target.value,
+                  )
+                }
+                placeholder="Optional product notes..."
+                className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+            <p className="text-xs leading-5 text-sky-800">
+              <strong>
+                Inventory principle:
+              </strong>{" "}
+              creating or editing a product does not change its
+              stock quantity. Physical stock is controlled through
+              batch receipts and stock movements.
+            </p>
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSaving
+                ? "Saving..."
+                : editingProduct
+                  ? "Save Product"
+                  : "Create Product"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 const unwrap = <T,>(
   response: ApiResponse<T>,
@@ -106,11 +498,31 @@ export default function App() {
     initialSettings,
   );
 
+  /*
+   * Legacy Drug state is intentionally retained.
+   *
+   * Dashboard and Reports still consume the legacy
+   * Drug structure while the new inventory architecture
+   * is being migrated module-by-module.
+   */
   const [
     drugs,
     setDrugs,
   ] = useState<Drug[]>(
     initialDrugs,
+  );
+
+  /*
+   * Authoritative inventory state.
+   *
+   * Product -> DrugBatch is now the source of truth
+   * for Inventory, Stock Adjustments and Dispensing.
+   */
+  const [
+    products,
+    setProducts,
+  ] = useState<InventoryProduct[]>(
+    [],
   );
 
   const [
@@ -152,24 +564,38 @@ export default function App() {
   ] = useState("");
 
   const [
-    isAddDrugOpen,
-    setIsAddDrugOpen,
+    isProductModalOpen,
+    setIsProductModalOpen,
   ] = useState(false);
 
   const [
-    editingDrug,
-    setEditingDrug,
-  ] = useState<Drug | null>(null);
+    editingProduct,
+    setEditingProduct,
+  ] = useState<InventoryProduct | null>(
+    null,
+  );
+
+  const [
+    productSaving,
+    setProductSaving,
+  ] = useState(false);
+
+  const [
+    productModalError,
+    setProductModalError,
+  ] = useState("");
 
   const isSuperAdmin =
     currentUser?.role ===
     "Super Admin";
 
   const isAdmin =
-    currentUser?.role === "Admin";
+    currentUser?.role ===
+    "Admin";
 
   const currentOrganizationId =
-    currentUser?.organizationId ?? null;
+    currentUser?.organizationId ??
+    null;
 
   const canViewInventory =
     currentUser?.role === "Admin" ||
@@ -187,14 +613,16 @@ export default function App() {
 
   const clearTenantData = () => {
     setDrugs([]);
+    setProducts([]);
     setPatients([]);
     setTransactions([]);
     setSuppliers([]);
     setAdjustments([]);
     setSettings(initialSettings);
     setDataError("");
-    setIsAddDrugOpen(false);
-    setEditingDrug(null);
+    setIsProductModalOpen(false);
+    setEditingProduct(null);
+    setProductModalError("");
   };
 
   useEffect(() => {
@@ -208,7 +636,6 @@ export default function App() {
       clearTenantData();
       setDataLoading(false);
       setDataError("");
-
       return;
     }
 
@@ -234,22 +661,42 @@ export default function App() {
         try {
           const [
             drugsResponse,
+            productsResponse,
             patientsResponse,
             transactionsResponse,
             settingsResponse,
           ] = await Promise.all([
             canViewInventory
-              ? api.get<Drug[]>("/drugs")
+              ? api.get<Drug[]>(
+                  "/drugs",
+                )
               : Promise.resolve({
                   success: true,
                   data: [],
-                } as ApiResponse<Drug[]>),
+                } as ApiResponse<
+                  Drug[]
+                >),
+
+            canViewInventory
+              ? api.get<
+                  InventoryProduct[]
+                >(
+                  "/products",
+                )
+              : Promise.resolve({
+                  success: true,
+                  data: [],
+                } as ApiResponse<
+                  InventoryProduct[]
+                >),
 
             api.get<PatientRecord[]>(
               "/patients",
             ),
 
-            api.get<DispenseTransaction[]>(
+            api.get<
+              DispenseTransaction[]
+            >(
               "/transactions",
             ),
 
@@ -263,11 +710,21 @@ export default function App() {
           }
 
           setDrugs(
-            unwrap(drugsResponse) || [],
+            unwrap(
+              drugsResponse,
+            ) || [],
+          );
+
+          setProducts(
+            unwrap(
+              productsResponse,
+            ) || [],
           );
 
           setPatients(
-            unwrap(patientsResponse) || [],
+            unwrap(
+              patientsResponse,
+            ) || [],
           );
 
           setTransactions(
@@ -277,7 +734,9 @@ export default function App() {
           );
 
           const loadedSettings =
-            unwrap(settingsResponse);
+            unwrap(
+              settingsResponse,
+            );
 
           if (loadedSettings) {
             setSettings(
@@ -294,7 +753,9 @@ export default function App() {
                 "/suppliers",
               ),
 
-              api.get<StockAdjustment[]>(
+              api.get<
+                StockAdjustment[]
+              >(
                 "/stock-adjustments",
               ),
             ]);
@@ -382,7 +843,9 @@ export default function App() {
 
       clearTenantData();
 
-      setActiveTab("dashboard");
+      setActiveTab(
+        "dashboard",
+      );
 
       try {
         const user =
@@ -411,13 +874,15 @@ export default function App() {
       if (
         (event.ctrlKey ||
           event.metaKey) &&
-        event.key.toLowerCase() === "p"
+        event.key.toLowerCase() ===
+          "p"
       ) {
         event.preventDefault();
 
         if (
           !isSuperAdmin &&
-          activeTab !== "dispensing"
+          activeTab !==
+            "dispensing"
         ) {
           setActiveTab(
             "dispensing",
@@ -442,107 +907,152 @@ export default function App() {
     isSuperAdmin,
   ]);
 
-  const handleOpenAddDrug = () => {
-    if (!isPharmacyStaff) {
-      return;
-    }
-
-    setEditingDrug(null);
-    setIsAddDrugOpen(true);
-  };
-
-  const handleOpenEditDrug = (
-    drug: Drug,
-  ) => {
-    if (!isPharmacyStaff) {
-      return;
-    }
-
-    setEditingDrug(drug);
-    setIsAddDrugOpen(true);
-  };
-
-  const handleSaveDrug = async (
-    drugData: Partial<Drug>,
-  ) => {
-    if (!isPharmacyStaff) {
-      setDataError(
-        "You do not have permission to modify inventory.",
-      );
-      return;
-    }
-
-    try {
-      if (editingDrug) {
-        const response =
-          await api.put<Drug>(
-            `/drugs/${editingDrug.id}`,
-            drugData,
-          );
-
-        const updated =
-          unwrap(response);
-
-        if (!updated) {
-          throw new Error(
-            "The server did not return the updated drug.",
-          );
-        }
-
-        setDrugs((previous) =>
-          previous.map((drug) =>
-            drug.id === editingDrug.id
-              ? updated
-              : drug,
-          ),
-        );
-      } else {
-        const response =
-          await api.post<Drug>(
-            "/drugs",
-            drugData,
-          );
-
-        const created =
-          unwrap(response);
-
-        if (!created) {
-          throw new Error(
-            "The server did not return the created drug.",
-          );
-        }
-
-        setDrugs((previous) => [
-          created,
-          ...previous,
-        ]);
+  const handleOpenAddProduct =
+    () => {
+      if (!isPharmacyStaff) {
+        return;
       }
 
-      setIsAddDrugOpen(false);
-      setEditingDrug(null);
-      setDataError("");
-    } catch (error) {
-      setDataError(
-        error instanceof Error
-          ? error.message
-          : "Unable to save drug.",
-      );
-    }
-  };
+      setEditingProduct(null);
+      setProductModalError("");
+      setIsProductModalOpen(true);
+    };
+
+  const handleOpenEditProduct =
+    (
+      product: InventoryProduct,
+    ) => {
+      if (!isPharmacyStaff) {
+        return;
+      }
+
+      setEditingProduct(product);
+      setProductModalError("");
+      setIsProductModalOpen(true);
+    };
+
+  const handleSaveProduct =
+    async (
+      productData: ProductFormState,
+      existingProduct: InventoryProduct | null,
+    ) => {
+      if (!isPharmacyStaff) {
+        setProductModalError(
+          "You do not have permission to manage products.",
+        );
+        return;
+      }
+
+      setProductSaving(true);
+      setProductModalError("");
+
+      try {
+        if (existingProduct) {
+          const response =
+            await api.put<InventoryProduct>(
+              `/products/${existingProduct.id}`,
+              productData,
+            );
+
+          const updated =
+            unwrap(response);
+
+          if (!updated) {
+            throw new Error(
+              "The server did not return the updated product.",
+            );
+          }
+
+          setProducts(
+            (previous) =>
+              previous.map(
+                (product) =>
+                  product.id ===
+                  existingProduct.id
+                    ? {
+                        ...product,
+                        ...updated,
+                        batches:
+                          updated.batches ??
+                          product.batches,
+                        totalQuantity:
+                          updated.totalQuantity ??
+                          product.totalQuantity,
+                        activeBatchCount:
+                          updated.activeBatchCount ??
+                          product.activeBatchCount,
+                        movementCount:
+                          updated.movementCount ??
+                          product.movementCount,
+                        earliestExpiry:
+                          updated.earliestExpiry ??
+                          product.earliestExpiry,
+                      }
+                    : product,
+              ),
+          );
+        } else {
+          const response =
+            await api.post<InventoryProduct>(
+              "/products",
+              productData,
+            );
+
+          const created =
+            unwrap(response);
+
+          if (!created) {
+            throw new Error(
+              "The server did not return the created product.",
+            );
+          }
+
+          setProducts(
+            (previous) => [
+              {
+                ...created,
+                batches:
+                  created.batches ??
+                  [],
+                totalQuantity:
+                  created.totalQuantity ??
+                  0,
+                activeBatchCount:
+                  created.activeBatchCount ??
+                  0,
+                movementCount:
+                  created.movementCount ??
+                  0,
+                earliestExpiry:
+                  created.earliestExpiry ??
+                  null,
+              },
+              ...previous,
+            ],
+          );
+        }
+
+        setIsProductModalOpen(
+          false,
+        );
+        setEditingProduct(null);
+        setProductModalError("");
+        setDataError("");
+      } catch (error) {
+        setProductModalError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save product.",
+        );
+      } finally {
+        setProductSaving(false);
+      }
+    };
 
   const handleReceiveStockSubmit =
     async (
-      drugId: string,
-      qtyReceived: number,
-      invoiceNo: string,
-      buyingPrice?: number,
-    ): Promise<{
-      drug: Drug;
-      receiving: {
-        invoiceNo: string;
-        quantityReceived: number;
-      };
-    }> => {
+      input: ReceiveStockInput,
+    ): Promise<void> => {
       if (!isPharmacyStaff) {
         const error =
           "You do not have permission to receive stock.";
@@ -553,41 +1063,25 @@ export default function App() {
       }
 
       try {
-        const response =
-          await api.post<{
-            drug: Drug;
-            receiving: {
-              invoiceNo: string;
-              quantityReceived: number;
-            };
-          }>(
-            "/stock-receiving",
-            {
-              drugId,
-              qtyReceived,
-              invoiceNo,
-              buyingPrice,
-            },
-          );
-
-        const result =
-          unwrap(response);
-
-        if (!result) {
-          throw new Error(
-            "The server did not return the stock receiving result.",
-          );
-        }
-
-        setDrugs((previous) =>
-          previous.map((drug) =>
-            drug.id === drugId
-              ? result.drug
-              : drug,
-          ),
+        await api.post(
+          "/inventory/receive",
+          input,
         );
 
-        return result;
+        const productsResponse =
+          await api.get<
+            InventoryProduct[]
+          >(
+            "/products",
+          );
+
+        setProducts(
+          unwrap(
+            productsResponse,
+          ) || [],
+        );
+
+        setDataError("");
       } catch (error) {
         const message =
           error instanceof Error
@@ -596,13 +1090,24 @@ export default function App() {
 
         setDataError(message);
 
-        throw new Error(message);
+        throw new Error(
+          message,
+        );
       }
     };
 
+  /*
+   * Dispensing.tsx performs the actual POST /transactions.
+   *
+   * This callback MUST NOT POST the transaction again.
+   *
+   * It only synchronizes local App state and refreshes the
+   * authoritative Product/Batch inventory after the server
+   * has successfully completed the dispensing transaction.
+   */
   const handleCompleteTransaction =
     async (
-      newTransaction: DispenseTransaction,
+      createdTransaction: DispenseTransaction,
     ) => {
       if (!isPharmacyStaff) {
         setDataError(
@@ -612,49 +1117,44 @@ export default function App() {
       }
 
       try {
-        const response =
-          await api.post<DispenseTransaction>(
-            "/transactions",
-            newTransaction,
-          );
-
-        const created =
-          unwrap(response);
-
-        if (!created) {
-          throw new Error(
-            "The server did not return the completed transaction.",
-          );
-        }
-
-        setTransactions((previous) => [
-          created,
-          ...previous,
-        ]);
+        setTransactions(
+          (previous) => [
+            createdTransaction,
+            ...previous.filter(
+              (transaction) =>
+                transaction.id !==
+                createdTransaction.id,
+            ),
+          ],
+        );
 
         const [
-          drugsResponse,
+          productsResponse,
           patientsResponse,
+          transactionsResponse,
         ] = await Promise.all([
-          canViewInventory
-            ? api.get<Drug[]>("/drugs")
-            : Promise.resolve({
-                success: true,
-                data: [],
-              } as ApiResponse<Drug[]>),
+          api.get<
+            InventoryProduct[]
+          >(
+            "/products",
+          ),
 
           api.get<PatientRecord[]>(
             "/patients",
           ),
+
+          api.get<
+            DispenseTransaction[]
+          >(
+            "/transactions",
+          ),
         ]);
 
-        if (canViewInventory) {
-          setDrugs(
-            unwrap(
-              drugsResponse,
-            ) || [],
-          );
-        }
+        setProducts(
+          unwrap(
+            productsResponse,
+          ) || [],
+        );
 
         setPatients(
           unwrap(
@@ -662,12 +1162,36 @@ export default function App() {
           ) || [],
         );
 
+        setTransactions(
+          unwrap(
+            transactionsResponse,
+          ) || [],
+        );
+
+        /*
+         * Keep the legacy Drug state refreshed for Dashboard
+         * and Reports while those modules are still being
+         * migrated to the new Product/Batch architecture.
+         */
+        if (canViewInventory) {
+          const drugsResponse =
+            await api.get<Drug[]>(
+              "/drugs",
+            );
+
+          setDrugs(
+            unwrap(
+              drugsResponse,
+            ) || [],
+          );
+        }
+
         setDataError("");
       } catch (error) {
         setDataError(
           error instanceof Error
             ? error.message
-            : "Unable to complete transaction.",
+            : "The transaction was completed, but the application could not refresh all inventory data.",
         );
       }
     };
@@ -699,10 +1223,12 @@ export default function App() {
           );
         }
 
-        setSuppliers((previous) => [
-          ...previous,
-          created,
-        ]);
+        setSuppliers(
+          (previous) => [
+            ...previous,
+            created,
+          ],
+        );
 
         setDataError("");
       } catch (error) {
@@ -741,12 +1267,15 @@ export default function App() {
           );
         }
 
-        setSuppliers((previous) =>
-          previous.map((item) =>
-            item.id === supplier.id
-              ? updated
-              : item,
-          ),
+        setSuppliers(
+          (previous) =>
+            previous.map(
+              (item) =>
+                item.id ===
+                supplier.id
+                  ? updated
+                  : item,
+            ),
         );
 
         setDataError("");
@@ -779,10 +1308,12 @@ export default function App() {
           );
         }
 
-        setPatients((previous) => [
-          ...previous,
-          created,
-        ]);
+        setPatients(
+          (previous) => [
+            ...previous,
+            created,
+          ],
+        );
 
         setDataError("");
       } catch (error) {
@@ -814,12 +1345,14 @@ export default function App() {
           );
         }
 
-        setPatients((previous) =>
-          previous.map((item) =>
-            item.id === patient.id
-              ? updated
-              : item,
-          ),
+        setPatients(
+          (previous) =>
+            previous.map(
+              (item) =>
+                item.id === patient.id
+                  ? updated
+                  : item,
+            ),
         );
 
         setDataError("");
@@ -832,6 +1365,12 @@ export default function App() {
       }
     };
 
+  /*
+   * StockAdjustments.tsx performs the actual POST.
+   *
+   * This callback only synchronizes App state after
+   * the server has successfully created the adjustment.
+   */
   const handleAddAdjustment =
     async (
       adjustment: StockAdjustment,
@@ -844,34 +1383,43 @@ export default function App() {
       }
 
       try {
-        const response =
-          await api.post<StockAdjustment>(
-            "/stock-adjustments",
+        setAdjustments(
+          (previous) => [
             adjustment,
-          );
+            ...previous.filter(
+              (item) =>
+                item.id !==
+                adjustment.id,
+            ),
+          ],
+        );
 
-        const created =
-          unwrap(response);
+        const [
+          productsResponse,
+          adjustmentsResponse,
+        ] = await Promise.all([
+          api.get<
+            InventoryProduct[]
+          >(
+            "/products",
+          ),
 
-        if (!created) {
-          throw new Error(
-            "The server did not return the stock adjustment.",
-          );
-        }
-
-        setAdjustments((previous) => [
-          created,
-          ...previous,
+          api.get<
+            StockAdjustment[]
+          >(
+            "/stock-adjustments",
+          ),
         ]);
 
-        const drugsResponse =
-          await api.get<Drug[]>(
-            "/drugs",
-          );
-
-        setDrugs(
+        setProducts(
           unwrap(
-            drugsResponse,
+            productsResponse,
+          ) || [],
+        );
+
+        setAdjustments(
+          unwrap(
+            adjustmentsResponse,
           ) || [],
         );
 
@@ -880,7 +1428,7 @@ export default function App() {
         setDataError(
           error instanceof Error
             ? error.message
-            : "Unable to record stock adjustment.",
+            : "Unable to refresh inventory after stock adjustment.",
         );
       }
     };
@@ -928,7 +1476,9 @@ export default function App() {
         );
       }
 
-      if (userId !== currentUser.id) {
+      if (
+        userId !== currentUser.id
+      ) {
         throw new Error(
           "You can only change your own password here.",
         );
@@ -1049,8 +1599,12 @@ export default function App() {
   if (isSuperAdmin) {
     return (
       <SuperAdminDashboard
-        currentUser={currentUser}
-        userName={currentUser.name}
+        currentUser={
+          currentUser
+        }
+        userName={
+          currentUser.name
+        }
         onLogout={logout}
       />
     );
@@ -1064,7 +1618,9 @@ export default function App() {
           setActiveTab
         }
         settings={settings}
-        currentUser={currentUser}
+        currentUser={
+          currentUser
+        }
         organizations={
           organizations
         }
@@ -1153,16 +1709,16 @@ export default function App() {
             "inventory" &&
             canViewInventory && (
               <Inventory
-                drugs={drugs}
+                products={products}
                 settings={settings}
                 readOnly={
                   !isPharmacyStaff
                 }
-                onAddDrug={
-                  handleOpenAddDrug
+                onAddProduct={
+                  handleOpenAddProduct
                 }
-                onEditDrug={
-                  handleOpenEditDrug
+                onEditProduct={
+                  handleOpenEditProduct
                 }
                 onReceiveStockSubmit={
                   handleReceiveStockSubmit
@@ -1173,7 +1729,7 @@ export default function App() {
           {activeTab ===
             "dispensing" && (
             <Dispensing
-              drugs={drugs}
+              products={products}
               settings={settings}
               transactions={
                 transactions
@@ -1234,7 +1790,7 @@ export default function App() {
             "stock-adjustments" &&
             canViewStockAdjustments && (
               <StockAdjustments
-                drugs={drugs}
+                products={products}
                 adjustments={
                   adjustments
                 }
@@ -1275,9 +1831,7 @@ export default function App() {
           {activeTab ===
             "settings" && (
             <Settings
-              settings={
-                settings
-              }
+              settings={settings}
               onSaveSettings={
                 handleSaveSettings
               }
@@ -1296,31 +1850,34 @@ export default function App() {
         </div>
       </main>
 
-      {isPharmacyStaff && (
-        <AddDrugModal
-          isOpen={
-            isAddDrugOpen
+      <ProductModal
+        isOpen={
+          isProductModalOpen
+        }
+        editingProduct={
+          editingProduct
+        }
+        onClose={() => {
+          if (productSaving) {
+            return;
           }
-          onClose={() => {
-            setIsAddDrugOpen(
-              false,
-            );
-            setEditingDrug(null);
-          }}
-          onSave={
-            handleSaveDrug
-          }
-          editingDrug={
-            editingDrug
-          }
-          settings={
-            settings
-          }
-          nextCodeNumber={
-            drugs.length + 1
-          }
-        />
-      )}
+
+          setIsProductModalOpen(
+            false,
+          );
+          setEditingProduct(null);
+          setProductModalError("");
+        }}
+        onSave={
+          handleSaveProduct
+        }
+        isSaving={
+          productSaving
+        }
+        error={
+          productModalError
+        }
+      />
 
       <LogoutModal
         isOpen={
