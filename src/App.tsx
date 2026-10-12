@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useEffect,
   useState,
 } from "react";
@@ -461,6 +461,18 @@ export default function App() {
    */
     const location = useLocation();
 
+    useEffect(() => {
+  if (
+    location.pathname.startsWith("/features/") ||
+    location.pathname === "/reset-password"
+  ) {
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: "auto",
+    });
+  }
+}, [location.pathname]);
   const publicRoute = useRoutes([
     {
       path: "/features/:feature",
@@ -480,6 +492,11 @@ export default function App() {
     activeTab,
     setActiveTab,
   ] = useState<TabType>("dashboard");
+
+  const [
+  restoredTabScope,
+  setRestoredTabScope,
+] = useState<string | null>(null);
 
   const {
     currentUser,
@@ -627,6 +644,119 @@ export default function App() {
   const isPharmacyStaff =
     currentUser?.role === "Admin" ||
     currentUser?.role === "Pharmacist";
+
+      /*
+   * Restore the last selected tab for this user and organization.
+   * A saved tab is restored only if the current role is allowed
+   * to access it.
+   */
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!currentUser || isSuperAdmin) {
+      setRestoredTabScope(null);
+      return;
+    }
+
+    const scope =
+      `${currentUser.id}:${currentOrganizationId ?? "no-organization"}`;
+
+    const storageKey =
+      `pharmatrack:active-tab:${scope}`;
+
+    let savedTab: string | null = null;
+
+    try {
+      savedTab = sessionStorage.getItem(storageKey);
+    } catch {
+      savedTab = null;
+    }
+
+    const allowedTabs: TabType[] = [
+      "dashboard",
+      "dispensing",
+      "patients",
+      "reports",
+      "settings",
+    ];
+
+    if (canViewInventory) {
+      allowedTabs.push("inventory");
+    }
+
+    if (canViewStockAdjustments) {
+      allowedTabs.push("stock-adjustments");
+    }
+
+    if (isPharmacyStaff) {
+      allowedTabs.push("suppliers");
+    }
+
+    if (isAdmin) {
+      allowedTabs.push(
+        "user-management",
+        "audit-logs",
+      );
+    }
+
+    const nextTab: TabType =
+      savedTab &&
+      allowedTabs.includes(savedTab as TabType)
+        ? (savedTab as TabType)
+        : "dashboard";
+
+    setActiveTab(nextTab);
+    setRestoredTabScope(scope);
+  }, [
+    authLoading,
+    currentUser?.id,
+    currentUser?.role,
+    currentOrganizationId,
+    isSuperAdmin,
+    isAdmin,
+    isPharmacyStaff,
+    canViewInventory,
+    canViewStockAdjustments,
+  ]);
+
+  /*
+   * Save the selected tab only after restoration has completed
+   * for the current user and organization.
+   */
+  useEffect(() => {
+    if (
+      authLoading ||
+      !currentUser ||
+      isSuperAdmin
+    ) {
+      return;
+    }
+
+    const scope =
+      `${currentUser.id}:${currentOrganizationId ?? "no-organization"}`;
+
+    if (restoredTabScope !== scope) {
+      return;
+    }
+
+    try {
+      sessionStorage.setItem(
+        `pharmatrack:active-tab:${scope}`,
+        activeTab,
+      );
+    } catch {
+      // Tab persistence is optional; the application must still work.
+    }
+  }, [
+    activeTab,
+    authLoading,
+    currentUser?.id,
+    currentOrganizationId,
+    isSuperAdmin,
+    restoredTabScope,
+  ]);
 
   const clearTenantData = () => {
     setDrugs([]);
@@ -858,11 +988,20 @@ export default function App() {
         return currentUser as UserAccount;
       }
 
+            try {
+        if (currentUser) {
+          sessionStorage.setItem(
+            `pharmatrack:active-tab:${currentUser.id}:${organizationId}`,
+            "dashboard",
+          );
+        }
+      } catch {
+        // Continue organization switching if storage is unavailable.
+      }
+
       clearTenantData();
 
-      setActiveTab(
-        "dashboard",
-      );
+      setActiveTab("dashboard");
 
       try {
         const user =
@@ -1512,6 +1651,15 @@ export default function App() {
 
   const handleLoginSuccess =
     (user: UserAccount) => {
+      try {
+        sessionStorage.setItem(
+          `pharmatrack:active-tab:${user.id}:${user.organizationId ?? "no-organization"}`,
+          "dashboard",
+        );
+      } catch {
+        // Continue login even if tab persistence is unavailable.
+      }
+
       syncAuthenticatedUser(user);
 
       setDataError("");
@@ -1521,6 +1669,15 @@ export default function App() {
 
   const handleSignUpSuccess =
     (user: UserAccount) => {
+      try {
+        sessionStorage.setItem(
+          `pharmatrack:active-tab:${user.id}:${user.organizationId ?? "no-organization"}`,
+          "dashboard",
+        );
+      } catch {
+        // Continue signup even if tab persistence is unavailable.
+      }
+
       syncAuthenticatedUser(user);
 
       setDataError("");

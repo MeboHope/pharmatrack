@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -106,12 +106,12 @@ const emptyInvitationForm: InvitationFormState = {
 };
 
 function formatDate(value?: string | Date | null) {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
-    return "—";
+    return "â€”";
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -122,12 +122,12 @@ function formatDate(value?: string | Date | null) {
 }
 
 function formatDateTime(value?: string | Date | null) {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
-    return "—";
+    return "â€”";
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -144,7 +144,7 @@ function formatOrganizationType(type: string) {
 }
 
 function formatRole(role?: string | null) {
-  if (!role) return "—";
+  if (!role) return "â€”";
 
   switch (role) {
     case "SUPER_ADMIN":
@@ -186,7 +186,7 @@ function formatEntity(entity: string) {
 
 function formatUptime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) {
-    return "—";
+    return "â€”";
   }
 
   const totalSeconds = Math.floor(seconds);
@@ -316,9 +316,53 @@ export function SuperAdminDashboard({
   onLogout,
 }: SuperAdminDashboardProps) {
   const [activeSection, setActiveSection] =
-    useState<SuperAdminSection>(
-      "dashboard",
-    );
+    useState<SuperAdminSection>(() => {
+      const validSections: SuperAdminSection[] = [
+        "dashboard",
+        "organizations",
+        "users",
+        "audit-logs",
+        "system-status",
+        "settings",
+      ];
+
+      if (!currentUser?.id) {
+        return "dashboard";
+      }
+
+      const storageKey =
+        `pharmatrack:super-admin-active-section:${currentUser.id}`;
+
+      try {
+        const savedSection = sessionStorage.getItem(storageKey);
+
+        if (
+          savedSection &&
+          validSections.includes(savedSection as SuperAdminSection)
+        ) {
+          return savedSection as SuperAdminSection;
+        }
+      } catch {
+        // Fall back to the dashboard if storage is unavailable.
+      }
+
+      return "dashboard";
+    });
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      return;
+    }
+
+    const storageKey =
+      `pharmatrack:super-admin-active-section:${currentUser.id}`;
+
+    try {
+      sessionStorage.setItem(storageKey, activeSection);
+    } catch {
+      // Navigation remains functional if storage is unavailable.
+    }
+  }, [activeSection, currentUser?.id]);
 
   const [organizations, setOrganizations] =
     useState<Organization[]>([]);
@@ -2406,7 +2450,7 @@ export function SuperAdminDashboard({
                                 Revoke
                               </button>
                             ) : (
-                              <span className="text-[11px] text-slate-400">—</span>
+                              <span className="text-[11px] text-slate-400">â€”</span>
                             )}
                           </td>
                         </tr>
@@ -2887,7 +2931,7 @@ export function SuperAdminDashboard({
                         user.id
                       }
                     >
-                      {user.name} —{" "}
+                      {user.name} â€”{" "}
                       {
                         user.email
                       }
@@ -3157,7 +3201,7 @@ export function SuperAdminDashboard({
                                 <p className="max-w-[170px] truncate text-[10px] text-slate-500">
                                   {log.User
                                     ?.email ||
-                                    "—"}
+                                    "â€”"}
                                 </p>
                               </div>
                             </div>
@@ -3217,7 +3261,7 @@ export function SuperAdminDashboard({
 
                           <td className="px-5 py-4 font-mono text-[10px] text-slate-500">
                             {log.ipAddress ||
-                              "—"}
+                              "â€”"}
                           </td>
 
                           <td className="px-5 py-4 text-right">
@@ -3626,7 +3670,7 @@ export function SuperAdminDashboard({
                     <p className="mt-2 text-lg font-bold text-slate-900">
                       {systemStatus
                         ? `${systemStatus.responseTimeMs} ms`
-                        : "—"}
+                        : "â€”"}
                     </p>
 
                     <p className="mt-1 text-xs text-slate-500">
@@ -3647,7 +3691,7 @@ export function SuperAdminDashboard({
                               .database
                               .status,
                           )
-                        : "—"}
+                        : "â€”"}
                     </p>
 
                     <p className="mt-1 text-xs text-slate-500">
@@ -3665,7 +3709,7 @@ export function SuperAdminDashboard({
                         ? formatUptime(
                             systemStatus.uptime,
                           )
-                        : "—"}
+                        : "â€”"}
                     </p>
 
                     <p className="mt-1 text-xs text-slate-500">
@@ -4671,7 +4715,7 @@ export function SuperAdminDashboard({
                   <p className="mt-1 text-xs text-slate-500">
                     {selectedAuditLog
                       .User?.email ||
-                      "—"}
+                      "â€”"}
                   </p>
                 </div>
 
@@ -4718,7 +4762,7 @@ export function SuperAdminDashboard({
 
                   <p className="mt-2 font-mono text-sm font-bold text-slate-900">
                     {selectedAuditLog.ipAddress ||
-                      "—"}
+                      "â€”"}
                   </p>
                 </div>
               </div>
