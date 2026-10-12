@@ -1192,23 +1192,30 @@ export const superAdminService = {
     const response =
       await api.get<BackendSystemStatus>(
         "/super-admin/system-status",
-      ) as unknown as BackendSystemStatusResponse;
+      ) as unknown as BackendSystemStatusResponse &
+        BackendSystemStatus;
 
     const rawStatus =
-      response.data ??
-      response.status;
+      response.data &&
+      typeof response.data === "object"
+        ? response.data
+        : response.status &&
+            typeof response.status === "object"
+          ? response.status
+          : response.api ||
+              response.database ||
+              response.server
+            ? response
+            : null;
 
-    if (
-      !rawStatus ||
-      typeof rawStatus === "string"
-    ) {
+    if (!rawStatus) {
       throw new Error(
         "The server did not return a valid system status object.",
       );
     }
 
     return normalizeSystemStatus(
-      rawStatus,
+      rawStatus as BackendSystemStatus,
     );
   },
 };
