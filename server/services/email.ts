@@ -32,6 +32,10 @@ const escapeHtml = (
     .replace(/'/g, "&#039;");
 };
 
+/* ============================================================
+   EMAIL VERIFICATION
+   ============================================================ */
+
 export const sendVerificationEmail =
   async ({
     to,
@@ -213,6 +217,213 @@ export const sendVerificationEmail =
 
       throw new Error(
         "Unable to send the verification email.",
+      );
+    }
+
+    return result.data;
+  };
+
+/* ============================================================
+   PASSWORD RESET
+   ============================================================ */
+
+export const sendPasswordResetEmail =
+  async ({
+    to,
+    name,
+    resetUrl,
+    expiresInMinutes = 30,
+  }: {
+    to: string;
+    name: string;
+    resetUrl: string;
+    expiresInMinutes?: number;
+  }) => {
+    const safeName =
+      escapeHtml(name);
+
+    const safeResetUrl =
+      escapeHtml(resetUrl);
+
+    const result =
+      await resend.emails.send({
+        from: EMAIL_FROM,
+        to: [to],
+        subject:
+          "Reset your PharmaTrack password",
+        html: `
+          <!DOCTYPE html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta
+                name="viewport"
+                content="width=device-width, initial-scale=1.0"
+              />
+              <title>
+                Reset your PharmaTrack password
+              </title>
+            </head>
+
+            <body
+              style="
+                margin: 0;
+                padding: 0;
+                background: #f8fafc;
+                font-family: Arial, Helvetica, sans-serif;
+                color: #0f172a;
+              "
+            >
+              <div
+                style="
+                  max-width: 600px;
+                  margin: 40px auto;
+                  padding: 24px;
+                "
+              >
+                <div
+                  style="
+                    background: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 16px;
+                    padding: 32px;
+                  "
+                >
+                  <div
+                    style="
+                      text-align: center;
+                      margin-bottom: 24px;
+                    "
+                  >
+                    <h1
+                      style="
+                        margin: 0;
+                        color: #22577a;
+                        font-size: 24px;
+                      "
+                    >
+                      PharmaTrack
+                    </h1>
+                  </div>
+
+                  <p
+                    style="
+                      font-size: 16px;
+                      line-height: 1.6;
+                    "
+                  >
+                    Hello ${safeName},
+                  </p>
+
+                  <p
+                    style="
+                      font-size: 15px;
+                      line-height: 1.6;
+                      color: #475569;
+                    "
+                  >
+                    We received a request to reset
+                    the password for your PharmaTrack
+                    account.
+                  </p>
+
+                  <div
+                    style="
+                      margin: 28px 0;
+                      text-align: center;
+                    "
+                  >
+                    <a
+                      href="${safeResetUrl}"
+                      style="
+                        display: inline-block;
+                        padding: 14px 24px;
+                        background: #22577a;
+                        color: #ffffff;
+                        text-decoration: none;
+                        border-radius: 10px;
+                        font-size: 15px;
+                        font-weight: 700;
+                      "
+                    >
+                      Reset Password
+                    </a>
+                  </div>
+
+                  <p
+                    style="
+                      font-size: 14px;
+                      line-height: 1.6;
+                      color: #64748b;
+                    "
+                  >
+                    This password reset link expires
+                    in ${expiresInMinutes} minutes and
+                    can only be used once.
+                  </p>
+
+                  <p
+                    style="
+                      font-size: 14px;
+                      line-height: 1.6;
+                      color: #64748b;
+                    "
+                  >
+                    If you did not request a password
+                    reset, you can safely ignore this
+                    email. Your current password will
+                    remain unchanged.
+                  </p>
+
+                  <p
+                    style="
+                      font-size: 12px;
+                      line-height: 1.5;
+                      color: #94a3b8;
+                      word-break: break-all;
+                    "
+                  >
+                    If the button does not work, copy
+                    and paste this address into your
+                    browser:
+                    <br />
+                    ${safeResetUrl}
+                  </p>
+
+                  <hr
+                    style="
+                      border: 0;
+                      border-top: 1px solid #e2e8f0;
+                      margin: 28px 0;
+                    "
+                  />
+
+                  <p
+                    style="
+                      margin: 0;
+                      font-size: 12px;
+                      line-height: 1.5;
+                      color: #94a3b8;
+                      text-align: center;
+                    "
+                  >
+                    PharmaTrack secure account recovery
+                  </p>
+                </div>
+              </div>
+            </body>
+          </html>
+        `,
+      });
+
+    if (result.error) {
+      console.error(
+        "Resend password reset email error:",
+        result.error,
+      );
+
+      throw new Error(
+        "Unable to send the password reset email.",
       );
     }
 

@@ -36,14 +36,14 @@ interface StockAdjustmentBatch {
   status?: string;
 }
 
-interface StockAdjustmentProduct {
+export interface StockAdjustmentProduct {
   id: string;
   code: string;
   name: string;
-  genericName?: string;
-  unit?: string;
-  category?: string;
-  formulation?: string;
+  genericName?: string | null;
+  unit?: string | null;
+  category?: string | null;
+  formulation?: string | null;
   status?: string;
 
   // InventoryProduct makes batches optional.

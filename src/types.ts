@@ -119,26 +119,97 @@ export interface PatientRecord {
   createdAt: string;
 }
 
+/**
+ * =========================================================
+ * ORGANIZATION USERS
+ * =========================================================
+ *
+ * This represents the organization-scoped user returned by
+ * GET /api/users.
+ *
+ * The role here comes from OrganizationMembership.role,
+ * which is the authoritative role for the current tenant.
+ */
+export interface OrganizationUser {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: OrganizationRole;
+  isVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * =========================================================
+ * DISPENSE TRANSACTION
+ * =========================================================
+ *
+ * clinicianId identifies the registered clinician who
+ * prescribed/referred the medication.
+ *
+ * clinicianName is retained for display and historical
+ * compatibility. The backend should derive/validate the
+ * name from clinicianId rather than trusting arbitrary text.
+ *
+ * userId is intentionally not represented here because it
+ * refers to the authenticated staff member who processed
+ * the transaction and is controlled by the backend.
+ */
 export interface DispenseTransaction {
   id: string;
+
   transactionNo: string;
+
   date: string;
+
   patientType:
     | "Walk-in Patient"
     | "Registered Patient";
+
   patientName: string;
+
   phone?: string;
+
+  /**
+   * Registered clinician associated with the prescription.
+   *
+   * Null/undefined can be used for legitimate OTC
+   * transactions where there is no prescriber.
+   */
+  clinicianId?: string | null;
+
+  /**
+   * Display name of the clinician.
+   *
+   * This remains useful for transaction history and
+   * backward compatibility.
+   */
   clinicianName: string;
+
   prescriptionDate?: string;
+
   diagnosis?: string;
+
   items: PrescriptionItem[];
+
   subtotal: number;
+
   discount: number;
+
   totalAmount: number;
-  paymentMethod: "Cash" | "M-Pesa";
+
+  paymentMethod:
+    | "Cash"
+    | "M-Pesa";
+
   cashTendered?: number;
+
   changeAmount?: number;
+
   mpesaCode?: string;
+
   status:
     | "Completed"
     | "Cancelled"
@@ -175,6 +246,7 @@ export interface StockAdjustment {
    * New inventory architecture.
    */
   productId?: string;
+
   batchId?: string;
 
   productName?: string;
@@ -183,6 +255,7 @@ export interface StockAdjustment {
    * Legacy compatibility fields.
    */
   drugId: string;
+
   drugName: string;
 
   batchNo: string;
@@ -239,7 +312,16 @@ export interface PharmacySettings {
   phone: string;
   email: string;
   currency: string;
+
+  /**
+   * Retained for compatibility with the existing settings
+   * implementation.
+   *
+   * Dispensing should no longer use this value as the
+   * authoritative prescribing clinician.
+   */
   clinicianName: string;
+
   expiryAlertDays: number;
   reorderAlertLevel: number;
   logoUrl?: string;
@@ -265,7 +347,8 @@ export type OrganizationStatus =
  * Role a user holds inside a specific organization.
  *
  * SUPER_ADMIN is deliberately excluded because Super Admin
- * operates at the platform level rather than as a tenant member.
+ * operates at the platform level rather than as a tenant
+ * member.
  */
 export type OrganizationRole =
   | "ADMIN"

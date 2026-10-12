@@ -1,9 +1,10 @@
-import React, {
+﻿import React, {
   useEffect,
   useState,
 } from "react";
 
 import {
+  useLocation,
   useRoutes,
 } from "react-router-dom";
 
@@ -28,6 +29,7 @@ import { UserManagement } from "./components/UserManagement";
 import AuditLogs from "./components/AuditLogs";
 import FeatureDetails from "./components/FeatureDetails";
 import { PharmaTrackLogo } from "./components/PharmaTrackLogo";
+import ResetPassword  from "./components/ResetPassword.tsx";
 
 import type {
   DispenseTransaction,
@@ -452,10 +454,25 @@ const unwrap = <T,>(
 };
 
 export default function App() {
+  /*
+   * Public routes must be evaluated before authentication
+   * because password-reset links are intentionally accessible
+   * without an authenticated session.
+   */
+    const location = useLocation();
+
   const publicRoute = useRoutes([
     {
       path: "/features/:feature",
       element: <FeatureDetails />,
+    },
+    {
+      path: "/reset-password",
+      element: <ResetPassword />,
+    },
+    {
+      path: "*",
+      element: null,
     },
   ]);
 
@@ -1556,7 +1573,15 @@ export default function App() {
     );
   }
 
-  if (publicRoute) {
+  /*
+   * Password reset and feature pages must remain reachable
+   * regardless of whether the user currently has a session.
+   */
+  const isPublicRoute =
+    location.pathname === "/reset-password" ||
+    location.pathname.startsWith("/features/");
+
+  if (isPublicRoute) {
     return publicRoute;
   }
 

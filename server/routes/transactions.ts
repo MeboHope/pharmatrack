@@ -1,7 +1,16 @@
-import { randomUUID } from "node:crypto";
-
-import { Prisma } from "@prisma/client";
 import { Router } from "express";
+import {
+  Prisma,
+  DrugBatchStatus,
+  HealthcareFrequency,
+  HealthcareRoute,
+  PatientType,
+  PaymentMethod,
+  ProductStatus,
+  StockMovementType,
+  TransactionStatus,
+} from "@prisma/client";
+import { randomUUID } from "node:crypto";
 
 import { prisma } from "../prisma.js";
 import {
@@ -27,1883 +36,1758 @@ const pharmacistOnly = requireRole(
   "PHARMACIST",
 );
 
-const parseDate = (
+const transactionInclude = {
+  PrescriptionItem: {
+    include: {
+      allocations: {
+        include: {
+          product: true,
+          batch: true,
+        },
+      },
+      Product: true,
+      Drug: true,
+    },
+  },
+  Patient: true,
+  User: true,
+  Clinician: true,
+} as const;
+
+type TransactionWithDetails =
+  Prisma.DispenseTransactionGetPayload<{
+    include: typeof transactionInclude;
+  }>;
+
+interface DispenseItemInput {
+  productId?: unknown;
+  qty?: unknown;
+  frequency?: unknown;
+  route?: unknown;
+  duration?: unknown;
+  durationUnit?: unknown;
+  specialInstructions?: unknown;
+}
+
+interface CreateTransactionBody {
+  patientType?: unknown;
+  patientId?: unknown;
+  patientName?: unknown;
+  phone?: unknown;
+  clinicianId?: unknown;
+  prescriptionDate?: unknown;
+  diagnosis?: unknown;
+  items?: unknown;
+  discount?: unknown;
+  paymentMethod?: unknown;
+  cashTendered?: unknown;
+  mpesaCode?: unknown;
+}
+
+function asTrimmedString(
   value: unknown,
-): Date | undefined => {
-  if (
-    typeof value !== "string" ||
-    !value.trim()
-  ) {
-    return undefined;
-  }
+): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
 
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return undefined;
-  }
-
-  return date;
-};
-
-const parseNonNegativeNumber = (
+function asOptionalString(
   value: unknown,
-): number | undefined => {
-  const number = Number(value);
+): string | undefined {
+  const valueString =
+    asTrimmedString(value);
 
-  if (
-    !Number.isFinite(number) ||
-    number < 0
-  ) {
-    return undefined;
-  }
+  return valueString || undefined;
+}
 
-  return number;
-};
-
-const parsePositiveInteger = (
+function asPositiveInteger(
   value: unknown,
-): number | undefined => {
-  const number = Number(value);
+): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value);
 
   if (
-    !Number.isInteger(number) ||
-    number <= 0
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed) ||
+    parsed <= 0
   ) {
-    return undefined;
+    return 0;
   }
 
-  return number;
-};
+  return parsed;
+}
 
-const frequencyValues = [
-  "OD",
-  "BD_BID",
-  "TID",
-  "QID",
-  "STAT",
-  "PRN",
-  "Q4H",
-  "Q6H",
-  "Q8H",
-  "Q12H",
-  "ON",
-] as const;
-
-const routeValues = [
-  "ORAL",
-  "TOPICAL",
-  "INTRAVENOUS",
-  "INTRAMUSCULAR",
-  "SUBCUTANEOUS",
-  "INHALATION",
-  "OPHTHALMIC",
-  "OTIC",
-  "RECTAL",
-  "SUBLINGUAL",
-] as const;
-
-const frequencyFromClient = (
+function asNonNegativeNumber(
   value: unknown,
-):
-  | (typeof frequencyValues)[number]
-  | undefined => {
-  if (
-    typeof value !== "string"
-  ) {
-    return undefined;
-  }
-
-  const mapping: Record<
-    string,
-    (typeof frequencyValues)[number]
-  > = {
-    "OD (Once daily)": "OD",
-    "BD / BID (Twice daily)": "BD_BID",
-    "TID (Three times daily)": "TID",
-    "QID (Four times daily)": "QID",
-    "STAT (Immediately)": "STAT",
-    "PRN (As needed)": "PRN",
-    "Q4H (Every 4 hours)": "Q4H",
-    "Q6H (Every 6 hours)": "Q6H",
-    "Q8H (Every 8 hours)": "Q8H",
-    "Q12H (Every 12 hours)": "Q12H",
-    "ON (At night)": "ON",
-  };
+): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(value);
 
   if (
-    value in mapping
+    !Number.isFinite(parsed) ||
+    parsed < 0
   ) {
-    return mapping[value];
+    return 0;
   }
 
-  if (
-    frequencyValues.includes(
-      value as (typeof frequencyValues)[number],
-    )
-  ) {
-    return value as
-      (typeof frequencyValues)[number];
-  }
+  return parsed;
+}
 
-  return undefined;
-};
-
-const routeFromClient = (
+function mapFrequency(
   value: unknown,
-):
-  | (typeof routeValues)[number]
-  | undefined => {
-  if (
-    typeof value !== "string"
-  ) {
-    return undefined;
+): HealthcareFrequency {
+  switch (value) {
+    case "OD":
+    case "OD (Once daily)":
+      return HealthcareFrequency.OD;
+
+    case "BD_BID":
+    case "BD / BID (Twice daily)":
+      return HealthcareFrequency.BD_BID;
+
+    case "TID":
+    case "TID (Three times daily)":
+      return HealthcareFrequency.TID;
+
+    case "QID":
+    case "QID (Four times daily)":
+      return HealthcareFrequency.QID;
+
+    case "STAT":
+    case "STAT (Immediately)":
+      return HealthcareFrequency.STAT;
+
+    case "PRN":
+    case "PRN (As needed)":
+      return HealthcareFrequency.PRN;
+
+    case "Q4H":
+    case "Q4H (Every 4 hours)":
+      return HealthcareFrequency.Q4H;
+
+    case "Q6H":
+    case "Q6H (Every 6 hours)":
+      return HealthcareFrequency.Q6H;
+
+    case "Q8H":
+    case "Q8H (Every 8 hours)":
+      return HealthcareFrequency.Q8H;
+
+    case "Q12H":
+    case "Q12H (Every 12 hours)":
+      return HealthcareFrequency.Q12H;
+
+    case "ON":
+    case "ON (At night)":
+      return HealthcareFrequency.ON;
+
+    default:
+      throw new Error(
+        "Invalid prescription frequency.",
+      );
   }
+}
 
-  const mapping: Record<
-    string,
-    (typeof routeValues)[number]
-  > = {
-    Oral: "ORAL",
-    Topical: "TOPICAL",
-    "Intravenous (IV)": "INTRAVENOUS",
-    "Intramuscular (IM)": "INTRAMUSCULAR",
-    Subcutaneous: "SUBCUTANEOUS",
-    Inhalation: "INHALATION",
-    Ophthalmic: "OPHTHALMIC",
-    Otic: "OTIC",
-    Rectal: "RECTAL",
-    Sublingual: "SUBLINGUAL",
-  };
+function mapRoute(
+  value: unknown,
+): HealthcareRoute {
+  switch (value) {
+    case "ORAL":
+    case "Oral":
+      return HealthcareRoute.ORAL;
 
-  if (
-    value in mapping
-  ) {
-    return mapping[value];
+    case "TOPICAL":
+    case "Topical":
+      return HealthcareRoute.TOPICAL;
+
+    case "INTRAVENOUS":
+    case "Intravenous (IV)":
+      return HealthcareRoute.INTRAVENOUS;
+
+    case "INTRAMUSCULAR":
+    case "Intramuscular (IM)":
+      return HealthcareRoute.INTRAMUSCULAR;
+
+    case "SUBCUTANEOUS":
+    case "Subcutaneous":
+      return HealthcareRoute.SUBCUTANEOUS;
+
+    case "INHALATION":
+    case "Inhalation":
+      return HealthcareRoute.INHALATION;
+
+    case "OPHTHALMIC":
+    case "Ophthalmic":
+      return HealthcareRoute.OPHTHALMIC;
+
+    case "OTIC":
+    case "Otic":
+      return HealthcareRoute.OTIC;
+
+    case "RECTAL":
+    case "Rectal":
+      return HealthcareRoute.RECTAL;
+
+    case "SUBLINGUAL":
+    case "Sublingual":
+      return HealthcareRoute.SUBLINGUAL;
+
+    default:
+      throw new Error(
+        "Invalid administration route.",
+      );
   }
+}
 
-  if (
-    routeValues.includes(
-      value as (typeof routeValues)[number],
-    )
-  ) {
-    return value as
-      (typeof routeValues)[number];
+function mapPatientType(
+  value: unknown,
+): PatientType {
+  switch (value) {
+    case "WALK_IN":
+    case "Walk-in Patient":
+      return PatientType.WALK_IN;
+
+    case "REGISTERED":
+    case "Registered Patient":
+      return PatientType.REGISTERED;
+
+    default:
+      throw new Error(
+        "Invalid patient type.",
+      );
   }
+}
 
-  return undefined;
-};
+function mapPaymentMethod(
+  value: unknown,
+): PaymentMethod {
+  switch (value) {
+    case "CASH":
+    case "Cash":
+      return PaymentMethod.CASH;
 
-const mapPatientType = (
-  value: string,
-) =>
-  value === "REGISTERED"
-    ? "REGISTERED"
-    : "WALK_IN";
+    case "MPESA":
+    case "M-Pesa":
+      return PaymentMethod.MPESA;
 
-const mapPaymentMethod = (
-  value: string,
-) =>
-  value === "MPESA"
-    ? "MPESA"
-    : "CASH";
+    default:
+      throw new Error(
+        "Invalid payment method.",
+      );
+  }
+}
 
-const transactionNumber = () => {
-  const date = new Date();
-
+function generateTransactionNumber(): string {
   const datePart =
-    [
-      date.getFullYear(),
-      String(
-        date.getMonth() + 1,
-      ).padStart(2, "0"),
-      String(
-        date.getDate(),
-      ).padStart(2, "0"),
-    ].join("");
+    new Date()
+      .toISOString()
+      .slice(0, 10)
+      .replace(/-/g, "");
 
-  return `PT-${datePart}-${randomUUID()
-    .slice(0, 8)
-    .toUpperCase()}`;
-};
+  const randomPart =
+    randomUUID()
+      .replace(/-/g, "")
+      .slice(0, 8)
+      .toUpperCase();
 
-const buildTransactionResponse = (
-  transaction: any,
-) => ({
-  ...transaction,
-  transactionNo:
-    transaction.transactionNo,
-  items:
-    transaction.PrescriptionItem ??
-    [],
-});
+  return `PT-${datePart}-${randomPart}`;
+}
 
-const loadTransaction = async (
+function isPrismaConflictError(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof
+      Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
+  );
+}
+
+function toNumber(
+  value:
+    | Prisma.Decimal
+    | number
+    | string
+    | null
+    | undefined,
+): number {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : 0;
+}
+
+async function getTransaction(
   id: string,
   organizationId: string,
-) => {
+): Promise<TransactionWithDetails | null> {
   return prisma.dispenseTransaction.findFirst(
     {
       where: {
         id,
         organizationId,
       },
-      include: {
-        PrescriptionItem: {
-          include: {
-            allocations: {
-              include: {
-                batch: true,
-              },
+      include: transactionInclude,
+    },
+  );
+}
+
+async function getOrganizationClinician(
+  clinicianId: string,
+  organizationId: string,
+): Promise<{
+  id: string;
+  name: string;
+} | null> {
+  const membership =
+    await prisma.organizationMembership.findFirst(
+      {
+        where: {
+          organizationId,
+          userId: clinicianId,
+          role: "CLINICIAN",
+        },
+        select: {
+          user: {
+            select: {
+              id: true,
+              name: true,
             },
           },
         },
-        Patient: true,
-        User: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
       },
-    },
-  );
-};
+    );
 
-/**
- * GET /api/transactions
- */
-router.get(
-  "/",
-  pharmacyStaff,
-  async (request, response, next) => {
-    try {
-      const organizationId =
-        request.auth?.organizationId;
+  if (!membership?.user) {
+    return null;
+  }
 
-      if (!organizationId) {
-        response.status(403).json({
-          success: false,
-          message:
-            "An active organization context is required.",
-        });
-        return;
-      }
+  return membership.user;
+}
 
-      const transactions =
-        await prisma.dispenseTransaction.findMany({
+async function cancelTransaction(
+  transactionId: string,
+  organizationId: string,
+  userId: string,
+): Promise<TransactionWithDetails> {
+  return prisma.$transaction(
+    async (tx) => {
+      const transaction =
+        await tx.dispenseTransaction.findFirst({
           where: {
+            id: transactionId,
             organizationId,
           },
           include: {
             PrescriptionItem: {
               include: {
-                allocations: {
-                  include: {
-                    batch: true,
-                  },
-                },
+                allocations: true,
               },
             },
-            Patient: true,
-            User: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-              },
-            },
-          },
-          orderBy: {
-            date: "desc",
           },
         });
 
-      response.json({
-        success: true,
-        data: transactions.map(
-          buildTransactionResponse,
-        ),
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
+      if (!transaction) {
+        throw new Error(
+          "Transaction not found.",
+        );
+      }
 
-/**
- * GET /api/transactions/:id
+      if (
+        transaction.status ===
+        TransactionStatus.CANCELLED
+      ) {
+        throw new Error(
+          "Transaction has already been cancelled.",
+        );
+      }
+
+      if (
+        transaction.status !==
+        TransactionStatus.COMPLETED
+      ) {
+        throw new Error(
+          "Only completed transactions can be cancelled.",
+        );
+      }
+
+      for (const item of transaction.PrescriptionItem) {
+        for (const allocation of item.allocations) {
+          const batch =
+            await tx.drugBatch.findFirst({
+              where: {
+                id: allocation.batchId,
+                organizationId,
+                productId:
+                  allocation.productId,
+              },
+            });
+
+          if (!batch) {
+            throw new Error(
+              `Batch ${allocation.batchId} could not be found while cancelling the transaction.`,
+            );
+          }
+
+          const previousQty =
+            batch.qty;
+
+          await tx.drugBatch.update({
+            where: {
+              id: batch.id,
+            },
+            data: {
+              qty: {
+                increment:
+                  allocation.quantity,
+              },
+            },
+          });
+
+          const resultingQty =
+            previousQty +
+            allocation.quantity;
+
+          await tx.stockMovement.create({
+            data: {
+              id: randomUUID(),
+              organizationId,
+              productId:
+                allocation.productId,
+              batchId:
+                allocation.batchId,
+              type:
+                StockMovementType.REVERSAL,
+              quantityDelta:
+                allocation.quantity,
+              previousQty,
+              resultingQty,
+              referenceType:
+                "DISPENSE_TRANSACTION",
+              referenceId:
+                transaction.id,
+              reason:
+                "Dispensing transaction cancelled",
+              notes:
+                `Reversal for transaction ${transaction.transactionNo}`,
+              userId,
+            },
+          });
+        }
+      }
+
+      const cancelled =
+        await tx.dispenseTransaction.update({
+          where: {
+            id: transaction.id,
+          },
+          data: {
+            status:
+              TransactionStatus.CANCELLED,
+          },
+          include: transactionInclude,
+        });
+
+      return cancelled;
+    },
+    {
+      isolationLevel:
+        Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5000,
+      timeout: 15000,
+    },
+  );
+}
+
+/*
+ * IMPORTANT:
+ *
+ * This route MUST appear before "/:id".
+ *
+ * Otherwise Express interprets:
+ *
+ *   GET /transactions/clinicians
+ *
+ * as:
+ *
+ *   GET /transactions/:id
+ *
+ * with id = "clinicians".
+ *
+ * That is what caused the "Transaction not found." message
+ * immediately when the Dispensing page opened.
  */
 router.get(
-  "/:id",
+  "/clinicians",
   pharmacyStaff,
-  async (request, response, next) => {
+  async (request, response) => {
     try {
       const organizationId =
         request.auth?.organizationId;
 
       if (!organizationId) {
-        response.status(403).json({
-          success: false,
+        return response.status(400).json({
           message:
-            "An active organization context is required.",
+            "Organization context is required.",
         });
-        return;
+      }
+
+      const memberships =
+        await prisma.organizationMembership.findMany(
+          {
+            where: {
+              organizationId,
+              role: "CLINICIAN",
+            },
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  phone: true,
+                },
+              },
+            },
+            orderBy: {
+              user: {
+                name: "asc",
+              },
+            },
+          },
+        );
+
+      const clinicians =
+        memberships.map(
+          (membership) => ({
+            id: membership.user.id,
+            name: membership.user.name,
+            email: membership.user.email,
+            phone: membership.user.phone,
+          }),
+        );
+
+      return response.json(
+        clinicians,
+      );
+    } catch (error) {
+      console.error(
+        "GET /transactions/clinicians error:",
+        error,
+      );
+
+      return response.status(500).json({
+        message:
+          "Failed to load registered clinicians.",
+      });
+    }
+  },
+);
+
+router.get(
+  "/",
+  pharmacyStaff,
+  async (request, response) => {
+    try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        return response.status(400).json({
+          message:
+            "Organization context is required.",
+        });
+      }
+
+      const transactions =
+        await prisma.dispenseTransaction.findMany(
+          {
+            where: {
+              organizationId,
+            },
+            include: transactionInclude,
+            orderBy: {
+              date: "desc",
+            },
+          },
+        );
+
+      return response.json(
+        transactions,
+      );
+    } catch (error) {
+      console.error(
+        "GET /transactions error:",
+        error,
+      );
+
+      return response.status(500).json({
+        message:
+          "Failed to load transactions.",
+      });
+    }
+  },
+);
+
+router.get(
+  "/:id",
+  pharmacyStaff,
+  async (request, response) => {
+    try {
+      const organizationId =
+        request.auth?.organizationId;
+
+      if (!organizationId) {
+        return response.status(400).json({
+          message:
+            "Organization context is required.",
+        });
       }
 
       const transaction =
-        await loadTransaction(
+        await getTransaction(
           request.params.id,
           organizationId,
         );
 
       if (!transaction) {
-        response.status(404).json({
-          success: false,
+        return response.status(404).json({
           message:
             "Transaction not found.",
         });
-        return;
       }
 
-      response.json({
-        success: true,
-        data:
-          buildTransactionResponse(
-            transaction,
-          ),
-      });
+      return response.json(
+        transaction,
+      );
     } catch (error) {
-      next(error);
+      console.error(
+        "GET /transactions/:id error:",
+        error,
+      );
+
+      return response.status(500).json({
+        message:
+          "Failed to load transaction.",
+      });
     }
   },
 );
 
-/**
- * POST /api/transactions
- *
- * Product-based FEFO dispensing.
- */
 router.post(
   "/",
   pharmacyStaff,
-  async (request, response, next) => {
+  async (request, response) => {
+    const body =
+      request.body as CreateTransactionBody;
+
+    const organizationId =
+      request.auth?.organizationId;
+
+    const userId =
+      request.auth?.sub;
+
+    if (!organizationId || !userId) {
+      return response.status(401).json({
+        message:
+          "Authenticated organization context is required.",
+      });
+    }
+
     try {
-      const organizationId =
-        request.auth?.organizationId;
+      const patientType =
+        mapPatientType(
+          body.patientType,
+        );
 
-      const authenticatedUserId =
-        request.auth?.sub;
+      const paymentMethod =
+        mapPaymentMethod(
+          body.paymentMethod,
+        );
 
-      if (!organizationId) {
-        response.status(403).json({
-          success: false,
-          message:
-            "An active organization context is required.",
-        });
-        return;
-      }
+      const patientName =
+        asTrimmedString(
+          body.patientName,
+        );
 
-      if (!authenticatedUserId) {
-        response.status(401).json({
-          success: false,
-          message:
-            "Authenticated user information is required.",
-        });
-        return;
-      }
+      const clinicianId =
+        asOptionalString(
+          body.clinicianId,
+        );
 
-      const body =
-        request.body ?? {};
+      const phone =
+        asOptionalString(
+          body.phone,
+        );
 
-      const {
-        patientType,
-        patientId,
-        patientName,
-        phone,
-        clinicianName,
-        prescriptionDate,
-        diagnosis,
-        discount,
-        paymentMethod,
-        cashTendered,
-        mpesaCode,
-        items,
-      } = body;
+      const prescriptionDate =
+        asOptionalString(
+          body.prescriptionDate,
+        );
 
-      if (
-        typeof patientName !==
-          "string" ||
-        !patientName.trim()
-      ) {
-        response.status(400).json({
-          success: false,
+      const diagnosis =
+        asOptionalString(
+          body.diagnosis,
+        );
+
+      const patientId =
+        asOptionalString(
+          body.patientId,
+        );
+
+      if (!patientName) {
+        return response.status(400).json({
           message:
             "Patient name is required.",
         });
-        return;
       }
 
-      if (
-        typeof clinicianName !==
-          "string" ||
-        !clinicianName.trim()
-      ) {
-        response.status(400).json({
-          success: false,
+      /*
+       * A production dispensing transaction must have
+       * an identified registered clinician.
+       *
+       * The frontend should therefore always send clinicianId.
+       */
+      if (!clinicianId) {
+        return response.status(400).json({
           message:
-            "Clinician name is required.",
+            "A registered clinician must be selected.",
+          code:
+            "CLINICIAN_REQUIRED",
         });
-        return;
       }
 
-      if (
-        patientType !==
-          "WALK_IN" &&
-        patientType !==
-          "REGISTERED"
-      ) {
-        response.status(400).json({
-          success: false,
+      /*
+       * Resolve the clinician from the current organization.
+       *
+       * This prevents a client from simply submitting an arbitrary
+       * clinician name or a clinician belonging to another organization.
+       */
+      const clinician =
+        await getOrganizationClinician(
+          clinicianId,
+          organizationId,
+        );
+
+      if (!clinician) {
+        return response.status(400).json({
           message:
-            "Patient type must be WALK_IN or REGISTERED.",
+            "The selected clinician is not a registered clinician in this organization.",
+          code:
+            "INVALID_CLINICIAN",
         });
-        return;
-      }
-
-      if (
-        paymentMethod !==
-          "CASH" &&
-        paymentMethod !==
-          "MPESA"
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Payment method must be CASH or MPESA.",
-        });
-        return;
-      }
-
-      if (
-        !Array.isArray(items) ||
-        items.length === 0
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "At least one medicine is required.",
-        });
-        return;
-      }
-
-      const parsedDiscount =
-        discount === undefined
-          ? 0
-          : parseNonNegativeNumber(
-              discount,
-            );
-
-      if (
-        parsedDiscount ===
-        undefined
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Discount must be a valid non-negative amount.",
-        });
-        return;
-      }
-
-      let parsedCashTendered:
-        | number
-        | undefined;
-
-      if (
-        cashTendered !== undefined &&
-        cashTendered !== null &&
-        cashTendered !== ""
-      ) {
-        parsedCashTendered =
-          parseNonNegativeNumber(
-            cashTendered,
-          );
-
-        if (
-          parsedCashTendered ===
-          undefined
-        ) {
-          response.status(400).json({
-            success: false,
-            message:
-              "Cash tendered must be a valid non-negative amount.",
-          });
-          return;
-        }
-      }
-
-      if (
-        paymentMethod === "CASH" &&
-        parsedCashTendered ===
-          undefined
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Cash tendered is required for cash payments.",
-        });
-        return;
-      }
-
-      if (
-        paymentMethod === "MPESA" &&
-        (typeof mpesaCode !==
-          "string" ||
-          !mpesaCode.trim())
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "M-Pesa transaction code is required.",
-        });
-        return;
-      }
-
-      const parsedPrescriptionDate =
-        prescriptionDate
-          ? parseDate(
-              prescriptionDate,
-            )
-          : undefined;
-
-      if (
-        prescriptionDate &&
-        !parsedPrescriptionDate
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Invalid prescription date.",
-        });
-        return;
       }
 
       if (
         patientType ===
-          "REGISTERED" &&
-        (typeof patientId !==
-          "string" ||
-          !patientId.trim())
+          PatientType.REGISTERED &&
+        !patientId
       ) {
-        response.status(400).json({
-          success: false,
+        return response.status(400).json({
           message:
-            "A patient ID is required for a registered patient.",
+            "A registered patient must be selected.",
         });
-        return;
       }
 
-      const result =
-        await prisma.$transaction(
-          async (tx) => {
-            const membership =
-              await tx.organizationMembership.findFirst(
-                {
-                  where: {
-                    organizationId,
-                    userId:
-                      authenticatedUserId,
-                  },
-                  select: {
-                    id: true,
-                    role: true,
-                  },
-                },
-              );
+      if (
+        patientType ===
+          PatientType.WALK_IN &&
+        patientId
+      ) {
+        return response.status(400).json({
+          message:
+            "Walk-in transactions cannot contain a registered patient ID.",
+        });
+      }
 
-            if (!membership) {
-              throw new Error(
-                "AUTH_USER_NOT_IN_ORGANIZATION",
-              );
-            }
+      const rawItems =
+        Array.isArray(body.items)
+          ? body.items
+          : [];
 
-            let patient:
-              | {
-                  id: string;
-                  name: string;
-                }
-              | null = null;
+      if (!rawItems.length) {
+        return response.status(400).json({
+          message:
+            "At least one medicine must be included.",
+        });
+      }
 
-            if (
-              typeof patientId ===
-                "string" &&
-              patientId.trim()
-            ) {
-              patient =
-                await tx.patient.findFirst(
-                  {
-                    where: {
-                      id:
-                        patientId.trim(),
-                      organizationId,
-                    },
-                    select: {
-                      id: true,
-                      name: true,
-                    },
-                  },
-                );
+      const items =
+        rawItems.map(
+          (rawItem) =>
+            rawItem as DispenseItemInput,
+        );
 
-              if (!patient) {
-                throw new Error(
-                  "PATIENT_NOT_FOUND",
-                );
-              }
-            }
+      const normalizedItems =
+        items.map((item) => {
+          const productId =
+            asTrimmedString(
+              item.productId,
+            );
 
-            const normalizedItems =
-              [];
+          const qty =
+            asPositiveInteger(
+              item.qty,
+            );
 
-            const seenProducts =
-              new Set<string>();
+          if (!productId) {
+            throw new Error(
+              "Every dispensing item must have a product.",
+            );
+          }
 
-            for (
-              const rawItem of items
-            ) {
-              if (
-                !rawItem ||
-                typeof rawItem !==
-                  "object"
-              ) {
-                throw new Error(
-                  "INVALID_PRESCRIPTION_ITEM",
-                );
-              }
+          if (!qty) {
+            throw new Error(
+              `Invalid quantity for product ${productId}.`,
+            );
+          }
 
-              const item =
-                rawItem as Record<
-                  string,
-                  unknown
-                >;
+          const duration =
+            asPositiveInteger(
+              item.duration,
+            );
 
-              const productId =
-                typeof item.productId ===
-                  "string"
-                  ? item.productId.trim()
-                  : "";
+          if (!duration) {
+            throw new Error(
+              `Invalid duration for product ${productId}.`,
+            );
+          }
 
-              if (!productId) {
-                throw new Error(
-                  "INVALID_PRODUCT_ID",
-                );
-              }
+          const durationUnit =
+            asTrimmedString(
+              item.durationUnit,
+            );
 
-              if (
-                seenProducts.has(
-                  productId,
-                )
-              ) {
-                throw new Error(
-                  "DUPLICATE_PRODUCT",
-                );
-              }
+          if (!durationUnit) {
+            throw new Error(
+              `Duration unit is required for product ${productId}.`,
+            );
+          }
 
-              seenProducts.add(
-                productId,
-              );
+          return {
+            productId,
+            qty,
+            frequency:
+              mapFrequency(
+                item.frequency,
+              ),
+            route:
+              mapRoute(item.route),
+            duration,
+            durationUnit,
+            specialInstructions:
+              asOptionalString(
+                item.specialInstructions,
+              ),
+          };
+        });
 
-              const qty =
-                parsePositiveInteger(
-                  item.qty,
-                );
+      const productIds =
+        normalizedItems.map(
+          (item) => item.productId,
+        );
 
-              if (
-                qty === undefined
-              ) {
-                throw new Error(
-                  "INVALID_ITEM_QUANTITY",
-                );
-              }
+      if (
+        new Set(productIds).size !==
+        productIds.length
+      ) {
+        return response.status(400).json({
+          message:
+            "The same product cannot appear more than once in a dispensing transaction.",
+        });
+      }
 
-              const frequency =
-                frequencyFromClient(
-                  item.frequency,
-                );
+      const discount =
+        asNonNegativeNumber(
+          body.discount,
+        );
 
-              if (!frequency) {
-                throw new Error(
-                  "INVALID_FREQUENCY",
-                );
-              }
+      const cashTendered =
+        body.cashTendered ===
+          undefined ||
+        body.cashTendered ===
+          null ||
+        body.cashTendered === ""
+          ? undefined
+          : asNonNegativeNumber(
+              body.cashTendered,
+            );
 
-              const route =
-                routeFromClient(
-                  item.route,
-                );
+      const mpesaCode =
+        asOptionalString(
+          body.mpesaCode,
+        );
 
-              if (!route) {
-                throw new Error(
-                  "INVALID_ROUTE",
-                );
-              }
+      if (
+        paymentMethod ===
+          PaymentMethod.MPESA &&
+        !mpesaCode
+      ) {
+        return response.status(400).json({
+          message:
+            "M-Pesa transaction code is required.",
+        });
+      }
 
-              const duration =
-                parsePositiveInteger(
-                  item.duration,
-                ) ?? 1;
+      if (
+        paymentMethod ===
+          PaymentMethod.CASH &&
+        cashTendered ===
+          undefined
+      ) {
+        return response.status(400).json({
+          message:
+            "Cash tendered is required for cash transactions.",
+        });
+      }
 
-              const durationUnit =
-                typeof item.durationUnit ===
-                    "string" &&
-                item.durationUnit.trim()
-                  ? item.durationUnit.trim()
-                  : "Days";
+      if (
+        patientType ===
+          PatientType.REGISTERED
+      ) {
+        const patient =
+          await prisma.patient.findFirst({
+            where: {
+              id: patientId,
+              organizationId,
+            },
+            select: {
+              id: true,
+            },
+          });
 
-              const product =
-                await tx.product.findFirst(
-                  {
-                    where: {
-                      id: productId,
-                      organizationId,
-                    },
-                    include: {
-                      batches: {
-                        where: {
-                          organizationId,
-                          productId,
-                          status:
-                            "ACTIVE",
-                          qty: {
-                            gt: 0,
-                          },
-                          expiryDate: {
-                            gte:
-                              new Date(),
-                          },
-                        },
-                        orderBy: [
-                          {
-                            expiryDate:
-                              "asc",
-                          },
-                          {
-                            createdAt:
-                              "asc",
-                          },
-                          {
-                            id: "asc",
-                          },
-                        ],
+        if (!patient) {
+          return response.status(404).json({
+            message:
+              "Registered patient was not found in this organization.",
+          });
+        }
+      }
+
+      const maxAttempts = 3;
+
+      let createdTransaction:
+        | TransactionWithDetails
+        | null = null;
+
+      for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt += 1
+      ) {
+        try {
+          createdTransaction =
+            await prisma.$transaction(
+              async (tx) => {
+                const now =
+                  new Date();
+
+                const transactionNo =
+                  generateTransactionNumber();
+
+                /*
+                 * Create the transaction shell first so all stock
+                 * movements can reference its ID.
+                 *
+                 * clinicianId identifies the registered prescribing
+                 * clinician.
+                 *
+                 * userId identifies the authenticated staff member
+                 * who processed/dispensed the transaction.
+                 */
+                const transaction =
+                  await tx.dispenseTransaction.create(
+                    {
+                      data: {
+                        id: randomUUID(),
+                        transactionNo,
+                        organizationId,
+                        patientType,
+                        patientId:
+                          patientType ===
+                          PatientType.REGISTERED
+                            ? patientId
+                            : null,
+                        patientName,
+                        phone:
+                          phone ?? null,
+                        clinicianId:
+                          clinician.id,
+                        clinicianName:
+                          clinician.name,
+                        prescriptionDate:
+                          prescriptionDate
+                            ? new Date(
+                                `${prescriptionDate}T00:00:00.000Z`,
+                              )
+                            : null,
+                        diagnosis:
+                          diagnosis ?? null,
+                        subtotal:
+                          new Prisma.Decimal(
+                            0,
+                          ),
+                        discount:
+                          new Prisma.Decimal(
+                            discount.toFixed(
+                              2,
+                            ),
+                          ),
+                        totalAmount:
+                          new Prisma.Decimal(
+                            0,
+                          ),
+                        paymentMethod,
+                        cashTendered:
+                          cashTendered !==
+                          undefined
+                            ? new Prisma.Decimal(
+                                cashTendered.toFixed(
+                                  2,
+                                ),
+                              )
+                            : null,
+                        changeAmount:
+                          null,
+                        mpesaCode:
+                          mpesaCode ?? null,
+                        status:
+                          TransactionStatus.COMPLETED,
+                        userId,
                       },
                     },
-                  },
-                );
-
-              if (!product) {
-                throw new Error(
-                  "PRODUCT_NOT_FOUND",
-                );
-              }
-
-              if (
-                product.status !==
-                "ACTIVE"
-              ) {
-                throw new Error(
-                  `PRODUCT_INACTIVE:${product.id}`,
-                );
-              }
-
-              const available =
-                product.batches.reduce(
-                  (
-                    total,
-                    batch,
-                  ) =>
-                    total +
-                    batch.qty,
-                  0,
-                );
-
-              if (
-                available < qty
-              ) {
-                throw new Error(
-                  `INSUFFICIENT_STOCK:${product.id}`,
-                );
-              }
-
-              normalizedItems.push({
-                product,
-                qty,
-                frequency,
-                route,
-                duration,
-                durationUnit,
-                specialInstructions:
-                  typeof item.specialInstructions ===
-                      "string" &&
-                  item.specialInstructions.trim()
-                    ? item.specialInstructions.trim()
-                    : null,
-              });
-            }
-
-            let subtotal =
-              new Prisma.Decimal(
-                0,
-              );
-
-            const itemResults =
-              [];
-
-            for (
-              const item of normalizedItems
-            ) {
-              let remaining =
-                item.qty;
-
-              let firstBatch:
-                | (typeof item.product.batches)[number]
-                | null =
-                null;
-
-              const allocations =
-                [];
-
-              for (
-                const batch of
-                  item.product
-                    .batches
-              ) {
-                if (
-                  remaining <=
-                  0
-                ) {
-                  break;
-                }
-
-                const allocationQty =
-                  Math.min(
-                    remaining,
-                    batch.qty,
                   );
 
-                if (
-                  allocationQty <=
-                  0
-                ) {
-                  continue;
-                }
+                let subtotal =
+                  new Prisma.Decimal(0);
 
-                if (
-                  !firstBatch
-                ) {
-                  firstBatch =
-                    batch;
-                }
-
-                const unitPrice =
-                  new Prisma.Decimal(
-                    batch.sellingPrice,
-                  );
-
-                const lineTotal =
-                  unitPrice.mul(
-                    allocationQty,
-                  );
-
-                const updated =
-                  await tx.drugBatch.updateMany(
-                    {
+                for (const item of normalizedItems) {
+                  const product =
+                    await tx.product.findFirst({
                       where: {
-                        id: batch.id,
+                        id: item.productId,
+                        organizationId,
+                        status:
+                          ProductStatus.ACTIVE,
+                      },
+                    });
+
+                  if (!product) {
+                    throw new Error(
+                      `Product ${item.productId} was not found or is inactive.`,
+                    );
+                  }
+
+                  const batches =
+                    await tx.drugBatch.findMany({
+                      where: {
                         organizationId,
                         productId:
-                          item.product
-                            .id,
+                          product.id,
                         status:
-                          "ACTIVE",
+                          DrugBatchStatus.ACTIVE,
+                        qty: {
+                          gt: 0,
+                        },
                         expiryDate: {
-                          gte:
-                            new Date(),
-                        },
-                        qty: {
-                          gte:
-                            allocationQty,
+                          gt: now,
                         },
                       },
-                      data: {
-                        qty: {
-                          decrement:
-                            allocationQty,
+                      orderBy: [
+                        {
+                          expiryDate:
+                            "asc",
+                        },
+                        {
+                          createdAt:
+                            "asc",
+                        },
+                        {
+                          id: "asc",
+                        },
+                      ],
+                    });
+
+                  const availableQty =
+                    batches.reduce(
+                      (
+                        total,
+                        batch,
+                      ) =>
+                        total +
+                        batch.qty,
+                      0,
+                    );
+
+                  if (
+                    availableQty <
+                    item.qty
+                  ) {
+                    throw new Error(
+                      `Insufficient stock for ${product.name}. Requested ${item.qty}, available ${availableQty}.`,
+                    );
+                  }
+
+                  let remaining =
+                    item.qty;
+
+                  const allocations: Array<{
+                    batchId: string;
+                    quantity: number;
+                    unitPrice: Prisma.Decimal;
+                    lineTotal: Prisma.Decimal;
+                    batchNo: string;
+                    expiryDate: Date;
+                    previousQty: number;
+                    resultingQty: number;
+                  }> = [];
+
+                  for (const batch of batches) {
+                    if (
+                      remaining <=
+                      0
+                    ) {
+                      break;
+                    }
+
+                    const allocationQty =
+                      Math.min(
+                        remaining,
+                        batch.qty,
+                      );
+
+                    const unitPrice =
+                      new Prisma.Decimal(
+                        batch.sellingPrice,
+                      );
+
+                    const lineTotal =
+                      unitPrice.mul(
+                        allocationQty,
+                      );
+
+                    const updateResult =
+                      await tx.drugBatch.updateMany(
+                        {
+                          where: {
+                            id: batch.id,
+                            organizationId,
+                            productId:
+                              product.id,
+                            status:
+                              DrugBatchStatus.ACTIVE,
+                            expiryDate: {
+                              gt: now,
+                            },
+                            qty: {
+                              gte: allocationQty,
+                            },
+                          },
+                          data: {
+                            qty: {
+                              decrement:
+                                allocationQty,
+                            },
+                          },
+                        },
+                      );
+
+                    if (
+                      updateResult.count !==
+                      1
+                    ) {
+                      throw new Prisma.PrismaClientKnownRequestError(
+                        "Concurrent stock change detected.",
+                        {
+                          code: "P2034",
+                          clientVersion:
+                            Prisma.prismaVersion.client,
+                        },
+                      );
+                    }
+
+                    const previousQty =
+                      batch.qty;
+
+                    const resultingQty =
+                      previousQty -
+                      allocationQty;
+
+                    allocations.push({
+                      batchId:
+                        batch.id,
+                      quantity:
+                        allocationQty,
+                      unitPrice,
+                      lineTotal,
+                      batchNo:
+                        batch.batchNo,
+                      expiryDate:
+                        batch.expiryDate,
+                      previousQty,
+                      resultingQty,
+                    });
+
+                    remaining -=
+                      allocationQty;
+                  }
+
+                  if (
+                    remaining >
+                    0
+                  ) {
+                    throw new Prisma.PrismaClientKnownRequestError(
+                      "Stock became insufficient during dispensing.",
+                      {
+                        code: "P2034",
+                        clientVersion:
+                          Prisma.prismaVersion.client,
+                      },
+                    );
+                  }
+
+                  const itemLineTotal =
+                    allocations.reduce(
+                      (
+                        total,
+                        allocation,
+                      ) =>
+                        total.plus(
+                          allocation.lineTotal,
+                        ),
+                      new Prisma.Decimal(
+                        0,
+                      ),
+                    );
+
+                  subtotal =
+                    subtotal.plus(
+                      itemLineTotal,
+                    );
+
+                  const weightedUnitPrice =
+                    itemLineTotal
+                      .div(item.qty)
+                      .toDecimalPlaces(
+                        2,
+                      );
+
+                  const firstAllocation =
+                    allocations[0];
+
+                  if (
+                    !firstAllocation
+                  ) {
+                    throw new Error(
+                      `No stock allocation was created for ${product.name}.`,
+                    );
+                  }
+
+                  const prescriptionItem =
+                    await tx.prescriptionItem.create(
+                      {
+                        data: {
+                          id: randomUUID(),
+                          drugId: null,
+                          productId:
+                            product.id,
+                          drugCode:
+                            product.code,
+                          drugName:
+                            product.name,
+                          batchNo:
+                            firstAllocation.batchNo,
+                          expiryDate:
+                            firstAllocation.expiryDate,
+                          availableQty,
+                          qty: item.qty,
+                          unitPrice:
+                            weightedUnitPrice,
+                          frequency:
+                            item.frequency,
+                          route:
+                            item.route,
+                          duration:
+                            item.duration,
+                          durationUnit:
+                            item.durationUnit,
+                          specialInstructions:
+                            item.specialInstructions ??
+                            null,
+                          lineTotal:
+                            itemLineTotal,
+                          transactionId:
+                            transaction.id,
                         },
                       },
-                    },
-                  );
+                    );
+
+                  for (const allocation of allocations) {
+                    await tx.dispenseAllocation.create(
+                      {
+                        data: {
+                          id: randomUUID(),
+                          transactionItemId:
+                            prescriptionItem.id,
+                          productId:
+                            product.id,
+                          batchId:
+                            allocation.batchId,
+                          quantity:
+                            allocation.quantity,
+                          unitPrice:
+                            allocation.unitPrice,
+                          lineTotal:
+                            allocation.lineTotal,
+                        },
+                      },
+                    );
+
+                    await tx.stockMovement.create(
+                      {
+                        data: {
+                          id: randomUUID(),
+                          organizationId,
+                          productId:
+                            product.id,
+                          batchId:
+                            allocation.batchId,
+                          type:
+                            StockMovementType.DISPENSE,
+                          quantityDelta:
+                            -allocation.quantity,
+                          previousQty:
+                            allocation.previousQty,
+                          resultingQty:
+                            allocation.resultingQty,
+                          referenceType:
+                            "DISPENSE_TRANSACTION",
+                          referenceId:
+                            transaction.id,
+                          reason:
+                            "Medicine dispensed",
+                          notes:
+                            `Dispensed under transaction ${transaction.transactionNo}`,
+                          userId,
+                        },
+                      },
+                    );
+                  }
+                }
 
                 if (
-                  updated.count !==
-                  1
+                  discount >
+                  toNumber(subtotal)
                 ) {
                   throw new Error(
-                    "STOCK_CONCURRENCY_CONFLICT",
+                    `Discount cannot exceed the transaction subtotal of ${subtotal.toFixed(2)}.`,
                   );
                 }
 
-                const previousQty =
-                  batch.qty;
+                const totalAmount =
+                  subtotal
+                    .minus(discount)
+                    .toDecimalPlaces(
+                      2,
+                    );
 
-                const resultingQty =
-                  previousQty -
-                  allocationQty;
+                let finalCashTendered:
+                  Prisma.Decimal | null =
+                    null;
 
-                const movement =
-                  await tx.stockMovement.create(
-                    {
-                      data: {
-                        organizationId,
-                        productId:
-                          item.product
-                            .id,
-                        batchId:
-                          batch.id,
-                        type:
-                          "DISPENSE",
-                        quantityDelta:
-                          -allocationQty,
-                        previousQty,
-                        resultingQty,
-                        referenceType:
-                          "DispenseTransaction",
-                        reason:
-                          "Medicine dispensed",
-                        userId:
-                          authenticatedUserId,
+                let changeAmount:
+                  Prisma.Decimal | null =
+                    null;
+
+                if (
+                  paymentMethod ===
+                  PaymentMethod.CASH
+                ) {
+                  if (
+                    cashTendered ===
+                    undefined
+                  ) {
+                    throw new Error(
+                      "Cash tendered is required.",
+                    );
+                  }
+
+                  finalCashTendered =
+                    new Prisma.Decimal(
+                      cashTendered.toFixed(
+                        2,
+                      ),
+                    );
+
+                  if (
+                    finalCashTendered.lessThan(
+                      totalAmount,
+                    )
+                  ) {
+                    throw new Error(
+                      `Cash tendered is insufficient. Required ${totalAmount.toFixed(2)}.`,
+                    );
+                  }
+
+                  changeAmount =
+                    finalCashTendered
+                      .minus(
+                        totalAmount,
+                      )
+                      .toDecimalPlaces(
+                        2,
+                      );
+                }
+
+                await tx.dispenseTransaction.update(
+                  {
+                    where: {
+                      id: transaction.id,
+                    },
+                    data: {
+                      subtotal:
+                        subtotal.toDecimalPlaces(
+                          2,
+                        ),
+                      discount:
+                        new Prisma.Decimal(
+                          discount.toFixed(
+                            2,
+                          ),
+                        ),
+                      totalAmount,
+                      cashTendered:
+                        finalCashTendered,
+                      changeAmount,
+                    },
+                  },
+                );
+
+                if (
+                  patientType ===
+                    PatientType.REGISTERED &&
+                  patientId
+                ) {
+                  await tx.patient.update({
+                    where: {
+                      id: patientId,
+                    },
+                    data: {
+                      totalVisits: {
+                        increment: 1,
                       },
                     },
-                  );
+                  });
+                }
 
-                allocations.push({
-                  batch,
-                  quantity:
-                    allocationQty,
-                  unitPrice,
-                  lineTotal,
-                  movementId:
-                    movement.id,
-                });
-
-                subtotal =
-                  subtotal.add(
-                    lineTotal,
-                  );
-
-                remaining -=
-                  allocationQty;
-              }
-
-              if (
-                remaining >
-                  0 ||
-                !firstBatch
-              ) {
-                throw new Error(
-                  "INSUFFICIENT_STOCK",
-                );
-              }
-
-              itemResults.push({
-                ...item,
-                firstBatch,
-                allocations,
-              });
-            }
-
-            const discountDecimal =
-              new Prisma.Decimal(
-                parsedDiscount.toFixed(
-                  2,
-                ),
-              );
-
-            if (
-              discountDecimal.gt(
-                subtotal,
-              )
-            ) {
-              throw new Error(
-                "DISCOUNT_EXCEEDS_SUBTOTAL",
-              );
-            }
-
-            const totalAmount =
-              subtotal.sub(
-                discountDecimal,
-              );
-
-            let finalChange =
-              new Prisma.Decimal(
-                0,
-              );
-
-            if (
-              paymentMethod ===
-              "CASH"
-            ) {
-              const tendered =
-                new Prisma.Decimal(
-                  (
-                    parsedCashTendered ??
-                    0
-                  ).toFixed(2),
-                );
-
-              if (
-                tendered.lt(
-                  totalAmount,
-                )
-              ) {
-                throw new Error(
-                  "INSUFFICIENT_CASH",
-                );
-              }
-
-              finalChange =
-                tendered.sub(
-                  totalAmount,
-                );
-            }
-
-            const transaction =
-              await tx.dispenseTransaction.create(
-                {
-                  data: {
-                    transactionNo:
-                      transactionNumber(),
-                    date:
-                      new Date(),
-                    patientType:
-                      mapPatientType(
-                        patientType,
-                      ),
-                    patientName:
-                      patientName.trim(),
-                    phone:
-                      typeof phone ===
-                          "string" &&
-                      phone.trim()
-                        ? phone.trim()
-                        : null,
-                    clinicianName:
-                      clinicianName.trim(),
-                    prescriptionDate:
-                      parsedPrescriptionDate ??
-                      null,
-                    diagnosis:
-                      typeof diagnosis ===
-                          "string" &&
-                      diagnosis.trim()
-                        ? diagnosis.trim()
-                        : null,
-                    subtotal:
-                      subtotal.toDecimalPlaces(
-                        2,
-                      ),
-                    discount:
-                      discountDecimal,
-                    totalAmount:
-                      totalAmount.toDecimalPlaces(
-                        2,
-                      ),
-                    paymentMethod:
-                      mapPaymentMethod(
-                        paymentMethod,
-                      ),
-                    cashTendered:
-                      paymentMethod ===
-                      "CASH"
-                        ? new Prisma.Decimal(
-                            (
-                              parsedCashTendered ??
-                              0
-                            ).toFixed(2),
-                          )
-                        : null,
-                    changeAmount:
-                      paymentMethod ===
-                      "CASH"
-                        ? finalChange.toDecimalPlaces(
-                            2,
-                          )
-                        : null,
-                    mpesaCode:
-                      paymentMethod ===
-                      "MPESA"
-                        ? mpesaCode.trim()
-                        : null,
-                    status:
-                      "COMPLETED",
-                    patientId:
-                      patient?.id ??
-                      null,
-                    userId:
-                      authenticatedUserId,
-                    organizationId,
-                  },
-                },
-              );
-
-            for (
-              const item of itemResults
-            ) {
-              const first =
-                item.firstBatch;
-
-              const firstAvailableQty =
-                first.qty;
-
-              const lineTotal =
-                item.allocations.reduce(
-                  (
-                    total,
-                    allocation,
-                  ) =>
-                    total.add(
-                      allocation.lineTotal,
-                    ),
-                  new Prisma.Decimal(
-                    0,
-                  ),
-                );
-
-              const prescriptionItem =
-                await tx.prescriptionItem.create(
+                return tx.dispenseTransaction.findUniqueOrThrow(
                   {
-                    data: {
-                      drugId:
-                        null,
-                      productId:
-                        item.product
-                          .id,
-                      drugCode:
-                        item.product
-                          .code,
-                      drugName:
-                        item.product
-                          .name,
-                      batchNo:
-                        first.batchNo,
-                      expiryDate:
-                        first.expiryDate,
-                      availableQty:
-                        firstAvailableQty,
-                      qty:
-                        item.qty,
-                      unitPrice:
-                        lineTotal.div(
-                          item.qty,
-                        ),
-                      frequency:
-                        item.frequency,
-                      route:
-                        item.route,
-                      duration:
-                        item.duration,
-                      durationUnit:
-                        item.durationUnit,
-                      specialInstructions:
-                        item.specialInstructions,
-                      lineTotal,
-                      transactionId:
-                        transaction.id,
+                    where: {
+                      id: transaction.id,
                     },
+                    include:
+                      transactionInclude,
                   },
                 );
+              },
+              {
+                isolationLevel:
+                  Prisma.TransactionIsolationLevel.Serializable,
+                maxWait: 5000,
+                timeout: 15000,
+              },
+            );
 
-              for (
-                const allocation of
-                  item.allocations
-              ) {
-                await tx.dispenseAllocation.create(
-                  {
-                    data: {
-                      transactionItemId:
-                        prescriptionItem.id,
-                      productId:
-                        item.product
-                          .id,
-                      batchId:
-                        allocation
-                          .batch
-                          .id,
-                      quantity:
-                        allocation.quantity,
-                      unitPrice:
-                        allocation.unitPrice,
-                      lineTotal:
-                        allocation.lineTotal,
-                    },
-                  },
-                );
-              }
-            }
+          break;
+        } catch (error) {
+          if (
+            isPrismaConflictError(
+              error,
+            ) &&
+            attempt <
+              maxAttempts
+          ) {
+            continue;
+          }
 
-            if (patient) {
-              await tx.patient.update({
-                where: {
-                  id: patient.id,
-                },
-                data: {
-                  totalVisits: {
-                    increment: 1,
-                  },
-                },
-              });
-            }
+          throw error;
+        }
+      }
 
-            return transaction;
-          },
-          {
-            isolationLevel:
-              Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 5000,
-            timeout: 15000,
-          },
+      if (!createdTransaction) {
+        throw new Error(
+          "The transaction could not be completed.",
         );
+      }
 
-      const complete =
-        await loadTransaction(
-          result.id,
-          organizationId,
-        );
-
-      await recordAudit(
-        request,
-        {
-          action: "CREATE",
-          entity:
-            "DispenseTransaction",
-          entityId:
-            result.id,
-          details: {
-            transactionNo:
-              result.transactionNo,
-            patientName:
-              result.patientName,
-            totalAmount:
-              result.totalAmount.toString(),
-          },
+      await recordAudit(request, {
+        action: "TRANSACTION_CREATED",
+        entity:
+          "DispenseTransaction",
+        entityId:
+          createdTransaction.id,
+        organizationId,
+        details: {
+          transactionNo:
+            createdTransaction.transactionNo,
+          patientName:
+            createdTransaction.patientName,
+          clinicianId:
+            createdTransaction.clinicianId,
+          clinicianName:
+            createdTransaction.clinicianName,
+          dispensedByUserId:
+            createdTransaction.userId,
+          totalAmount:
+            toNumber(
+              createdTransaction.totalAmount,
+            ),
+          itemCount:
+            createdTransaction
+              .PrescriptionItem
+              .length,
+          status:
+            createdTransaction.status,
         },
+      });
+
+      return response.status(201).json(
+        createdTransaction,
+      );
+    } catch (error) {
+      console.error(
+        "POST /transactions error:",
+        error,
       );
 
-      response.status(201).json({
-        success: true,
-        data:
-          buildTransactionResponse(
-            complete ?? result,
-          ),
-      });
-    } catch (error) {
-      if (
+      const message =
         error instanceof Error
+          ? error.message
+          : "Failed to create transaction.";
+
+      if (
+        message
+          .toLowerCase()
+          .includes(
+            "insufficient stock",
+          )
       ) {
-        switch (error.message) {
-          case "AUTH_USER_NOT_IN_ORGANIZATION":
-            response.status(403).json({
-              success: false,
-              message:
-                "The authenticated user does not belong to this organization.",
-            });
-            return;
-
-          case "PATIENT_NOT_FOUND":
-            response.status(404).json({
-              success: false,
-              message:
-                "Patient not found in the current organization.",
-            });
-            return;
-
-          case "PRODUCT_NOT_FOUND":
-            response.status(404).json({
-              success: false,
-              message:
-                "One of the selected products was not found in the current organization.",
-            });
-            return;
-
-          case "INVALID_PRESCRIPTION_ITEM":
-            response.status(400).json({
-              success: false,
-              message:
-                "One or more prescription items are invalid.",
-            });
-            return;
-
-          case "INVALID_PRODUCT_ID":
-            response.status(400).json({
-              success: false,
-              message:
-                "A valid product ID is required for every medicine.",
-            });
-            return;
-
-          case "INVALID_ITEM_QUANTITY":
-            response.status(400).json({
-              success: false,
-              message:
-                "Every medicine must have a valid positive quantity.",
-            });
-            return;
-
-          case "INVALID_FREQUENCY":
-            response.status(400).json({
-              success: false,
-              message:
-                "Every medicine must have a valid frequency.",
-            });
-            return;
-
-          case "INVALID_ROUTE":
-            response.status(400).json({
-              success: false,
-              message:
-                "Every medicine must have a valid route.",
-            });
-            return;
-
-          case "DUPLICATE_PRODUCT":
-            response.status(400).json({
-              success: false,
-              message:
-                "The same product cannot appear more than once in a dispensing transaction.",
-            });
-            return;
-
-          case "DISCOUNT_EXCEEDS_SUBTOTAL":
-            response.status(400).json({
-              success: false,
-              message:
-                "Discount cannot exceed the transaction subtotal.",
-            });
-            return;
-
-          case "INSUFFICIENT_CASH":
-            response.status(400).json({
-              success: false,
-              message:
-                "Cash tendered is less than the calculated transaction total.",
-            });
-            return;
-
-          case "STOCK_CONCURRENCY_CONFLICT":
-            response.status(409).json({
-              success: false,
-              message:
-                "Stock changed while this transaction was being processed. Please refresh inventory and try again.",
-            });
-            return;
-
-          case "INSUFFICIENT_STOCK":
-            response.status(409).json({
-              success: false,
-              message:
-                "Insufficient usable stock for one or more selected medicines.",
-            });
-            return;
-
-          case "INVALID_PRESCRIPTION_ITEM":
-            response.status(400).json({
-              success: false,
-              message:
-                "One or more prescription items are invalid.",
-            });
-            return;
-        }
-
-        if (
-          error.message.startsWith(
-            "INSUFFICIENT_STOCK:",
-          )
-        ) {
-          response.status(409).json({
-            success: false,
-            message:
-              "Insufficient usable stock for one or more selected medicines.",
-          });
-          return;
-        }
-
-        if (
-          error.message.startsWith(
-            "PRODUCT_INACTIVE:",
-          )
-        ) {
-          response.status(409).json({
-            success: false,
-            message:
-              "One of the selected products is inactive and cannot be dispensed.",
-          });
-          return;
-        }
+        return response.status(409).json({
+          message,
+          code:
+            "INSUFFICIENT_STOCK",
+        });
       }
 
       if (
-        error instanceof
-        Prisma.PrismaClientKnownRequestError
+        message
+          .toLowerCase()
+          .includes(
+            "concurrent stock",
+          ) ||
+        isPrismaConflictError(error)
       ) {
-        if (
-          error.code === "P2002"
-        ) {
-          response.status(409).json({
-            success: false,
-            message:
-              "A transaction with this number already exists. Please try again.",
-          });
-          return;
-        }
-
-        if (
-          error.code === "P2025"
-        ) {
-          response.status(404).json({
-            success: false,
-            message:
-              "A referenced record could not be found.",
-          });
-          return;
-        }
-
-        if (
-          error.code === "P2034"
-        ) {
-          response.status(409).json({
-            success: false,
-            message:
-              "Stock changed while this transaction was being processed. Please refresh inventory and try again.",
-          });
-          return;
-        }
+        return response.status(409).json({
+          message:
+            "Stock changed while this transaction was being processed. Please review the stock and try again.",
+          code:
+            "CONCURRENT_STOCK_CHANGE",
+        });
       }
 
-      next(error);
+      if (
+        message
+          .toLowerCase()
+          .includes(
+            "discount cannot exceed",
+          ) ||
+        message
+          .toLowerCase()
+          .includes(
+            "cash tendered is insufficient",
+          )
+      ) {
+        return response.status(400).json({
+          message,
+        });
+      }
+
+      return response.status(400).json({
+        message,
+      });
     }
   },
 );
 
-/**
- * PATCH /api/transactions/:id/cancel
- *
- * ADMIN + PHARMACIST
- *
- * Restores every FEFO allocation and records
- * a REVERSAL movement for each affected batch.
- */
 router.patch(
   "/:id/cancel",
   pharmacistOnly,
-  async (request, response, next) => {
+  async (request, response) => {
+    const organizationId =
+      request.auth?.organizationId;
+
+    const userId =
+      request.auth?.sub;
+
+    if (!organizationId || !userId) {
+      return response.status(401).json({
+        message:
+          "Authenticated organization context is required.",
+      });
+    }
+
     try {
-      const organizationId =
-        request.auth?.organizationId;
+      let cancelled:
+        | TransactionWithDetails
+        | null = null;
 
-      const authenticatedUserId =
-        request.auth?.sub;
+      const maxAttempts = 3;
 
-      if (!organizationId) {
-        response.status(403).json({
-          success: false,
-          message:
-            "An active organization context is required.",
-        });
-        return;
-      }
-
-      if (!authenticatedUserId) {
-        response.status(401).json({
-          success: false,
-          message:
-            "Authenticated user information is required.",
-        });
-        return;
-      }
-
-      const result =
-        await prisma.$transaction(
-          async (tx) => {
-            const transaction =
-              await tx.dispenseTransaction.findFirst(
-                {
-                  where: {
-                    id:
-                      request.params.id,
-                    organizationId,
-                  },
-                  include: {
-                    PrescriptionItem: {
-                      include: {
-                        allocations: true,
-                      },
-                    },
-                  },
-                },
-              );
-
-            if (!transaction) {
-              throw new Error(
-                "TRANSACTION_NOT_FOUND",
-              );
-            }
-
-            if (
-              transaction.status ===
-              "CANCELLED"
-            ) {
-              throw new Error(
-                "TRANSACTION_ALREADY_CANCELLED",
-              );
-            }
-
-            if (
-              transaction.status !==
-              "COMPLETED"
-            ) {
-              throw new Error(
-                "TRANSACTION_NOT_COMPLETED",
-              );
-            }
-
-            for (
-              const item of
-                transaction.PrescriptionItem
-            ) {
-              for (
-                const allocation of
-                  item.allocations
-              ) {
-                const batch =
-                  await tx.drugBatch.findFirst(
-                    {
-                      where: {
-                        id:
-                          allocation.batchId,
-                        organizationId,
-                        productId:
-                          allocation.productId,
-                      },
-                    },
-                  );
-
-                if (!batch) {
-                  throw new Error(
-                    "BATCH_NOT_FOUND",
-                  );
-                }
-
-                const previousQty =
-                  batch.qty;
-
-                const updated =
-                  await tx.drugBatch.updateMany(
-                    {
-                      where: {
-                        id: batch.id,
-                        organizationId,
-                        productId:
-                          allocation.productId,
-                      },
-                      data: {
-                        qty: {
-                          increment:
-                            allocation.quantity,
-                        },
-                      },
-                    },
-                  );
-
-                if (
-                  updated.count !==
-                  1
-                ) {
-                  throw new Error(
-                    "STOCK_REVERSAL_CONFLICT",
-                  );
-                }
-
-                await tx.stockMovement.create(
-                  {
-                    data: {
-                      organizationId,
-                      productId:
-                        allocation.productId,
-                      batchId:
-                        allocation.batchId,
-                      type:
-                        "REVERSAL",
-                      quantityDelta:
-                        allocation.quantity,
-                      previousQty,
-                      resultingQty:
-                        previousQty +
-                        allocation.quantity,
-                      referenceType:
-                        "DispenseTransaction",
-                      referenceId:
-                        transaction.id,
-                      reason:
-                        "Dispensing transaction cancelled",
-                      userId:
-                        authenticatedUserId,
-                    },
-                  },
-                );
-              }
-            }
-
-            return tx.dispenseTransaction.update(
-              {
-                where: {
-                  id: transaction.id,
-                },
-                data: {
-                  status:
-                    "CANCELLED",
-                },
-              },
+      for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt += 1
+      ) {
+        try {
+          cancelled =
+            await cancelTransaction(
+              request.params.id,
+              organizationId,
+              userId,
             );
-          },
-          {
-            isolationLevel:
-              Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 5000,
-            timeout: 15000,
-          },
-        );
 
-      const complete =
-        await loadTransaction(
-          result.id,
-          organizationId,
-        );
+          break;
+        } catch (error) {
+          if (
+            isPrismaConflictError(
+              error,
+            ) &&
+            attempt <
+              maxAttempts
+          ) {
+            continue;
+          }
 
-      await recordAudit(
-        request,
-        {
-          action: "CANCEL",
-          entity:
-            "DispenseTransaction",
-          entityId:
-            result.id,
-          details: {
-            transactionNo:
-              result.transactionNo,
-            status:
-              result.status,
-          },
+          throw error;
+        }
+      }
+
+      if (!cancelled) {
+        return response.status(500).json({
+          message:
+            "The transaction could not be cancelled.",
+        });
+      }
+
+      await recordAudit(request, {
+        action:
+          "TRANSACTION_CANCELLED",
+        entity:
+          "DispenseTransaction",
+        entityId:
+          cancelled.id,
+        organizationId,
+        details: {
+          transactionNo:
+            cancelled.transactionNo,
+          totalAmount:
+            toNumber(
+              cancelled.totalAmount,
+            ),
+          clinicianId:
+            cancelled.clinicianId,
+          clinicianName:
+            cancelled.clinicianName,
+          cancelledByUserId:
+            userId,
+          status:
+            cancelled.status,
         },
+      });
+
+      return response.json(
+        cancelled,
+      );
+    } catch (error) {
+      console.error(
+        "PATCH /transactions/:id/cancel error:",
+        error,
       );
 
-      response.json({
-        success: true,
-        data:
-          buildTransactionResponse(
-            complete ?? result,
-          ),
-      });
-    } catch (error) {
-      if (
+      const message =
         error instanceof Error
+          ? error.message
+          : "Failed to cancel transaction.";
+
+      if (
+        message ===
+        "Transaction not found."
       ) {
-        switch (error.message) {
-          case "TRANSACTION_NOT_FOUND":
-            response.status(404).json({
-              success: false,
-              message:
-                "Transaction not found.",
-            });
-            return;
-
-          case "TRANSACTION_ALREADY_CANCELLED":
-            response.status(409).json({
-              success: false,
-              message:
-                "This transaction has already been cancelled.",
-            });
-            return;
-
-          case "TRANSACTION_NOT_COMPLETED":
-            response.status(409).json({
-              success: false,
-              message:
-                "Only completed transactions can be cancelled.",
-            });
-            return;
-
-          case "BATCH_NOT_FOUND":
-            response.status(404).json({
-              success: false,
-              message:
-                "A batch associated with this transaction could not be found.",
-            });
-            return;
-
-          case "STOCK_REVERSAL_CONFLICT":
-            response.status(409).json({
-              success: false,
-              message:
-                "Stock changed while the cancellation was being processed. Please try again.",
-            });
-            return;
-        }
+        return response.status(404).json({
+          message,
+        });
       }
 
       if (
-        error instanceof
-        Prisma.PrismaClientKnownRequestError
+        message.includes(
+          "already been cancelled",
+        )
       ) {
-        if (
-          error.code === "P2034"
-        ) {
-          response.status(409).json({
-            success: false,
-            message:
-              "Stock changed while the cancellation was being processed. Please try again.",
-          });
-          return;
-        }
-
-        if (
-          error.code === "P2025"
-        ) {
-          response.status(404).json({
-            success: false,
-            message:
-              "Transaction not found.",
-          });
-          return;
-        }
+        return response.status(409).json({
+          message,
+        });
       }
 
-      next(error);
+      return response.status(400).json({
+        message,
+      });
     }
   },
 );
 
 /**
- * PUT /api/transactions/:id
+ * Keep the old PUT endpoint safe for existing clients.
  *
- * Kept for compatibility, but completed transactions
- * should use the cancellation endpoint rather than
- * directly changing status.
+ * We deliberately do not allow arbitrary status manipulation because
+ * changing COMPLETED/CANCELLED without reversing or allocating stock
+ * would corrupt inventory.
  */
 router.put(
   "/:id",
   pharmacistOnly,
-  async (request, response, next) => {
-    try {
-      const organizationId =
-        request.auth?.organizationId;
+  async (request, response) => {
+    const requestedStatus =
+      request.body?.status;
 
-      if (!organizationId) {
-        response.status(403).json({
-          success: false,
-          message:
-            "An active organization context is required.",
-        });
-        return;
-      }
-
-      const existing =
-        await prisma.dispenseTransaction.findFirst(
-          {
-            where: {
-              id:
-                request.params.id,
-              organizationId,
-            },
-          },
-        );
-
-      if (!existing) {
-        response.status(404).json({
-          success: false,
-          message:
-            "Transaction not found.",
-        });
-        return;
-      }
-
-      const body =
-        request.body ?? {};
-
-      if (
-        body.status ===
-        "CANCELLED"
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Use the transaction cancellation endpoint to cancel a completed dispensing transaction.",
-        });
-        return;
-      }
-
-      if (
-        body.status !==
-          "COMPLETED" &&
-        body.status !==
-          "PENDING"
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "Status must be COMPLETED or PENDING.",
-        });
-        return;
-      }
-
-      const transaction =
-        await prisma.dispenseTransaction.update(
-          {
-            where: {
-              id: existing.id,
-            },
-            data: {
-              status:
-                body.status,
-            },
-          },
-        );
-
-      await recordAudit(
-        request,
-        {
-          action: "UPDATE",
-          entity:
-            "DispenseTransaction",
-          entityId:
-            transaction.id,
-          details: {
-            transactionNo:
-              transaction.transactionNo,
-            status:
-              transaction.status,
-          },
-        },
-      );
-
-      response.json({
-        success: true,
-        data: transaction,
+    if (
+      requestedStatus ===
+        "CANCELLED" ||
+      requestedStatus ===
+        "Cancelled"
+    ) {
+      return response.status(400).json({
+        message:
+          "Use PATCH /transactions/:id/cancel to cancel a transaction safely.",
       });
-    } catch (error) {
-      next(error);
     }
+
+    return response.status(400).json({
+      message:
+        "Transaction status is server-controlled. Use the dedicated cancellation endpoint.",
+    });
   },
 );
 

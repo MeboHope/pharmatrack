@@ -221,7 +221,10 @@ export interface GetAuditLogsResult {
 export type SystemServiceStatus =
   | "OPERATIONAL"
   | "DEGRADED"
-  | "DOWN";
+  | "DOWN"
+  | "CONNECTED"
+  | "DISCONNECTED"
+  | "UNKNOWN";
 
 export interface SystemStatusService {
   status: SystemServiceStatus;
@@ -232,22 +235,64 @@ export interface SystemStatusService {
 export interface SystemStatus {
   status: SystemServiceStatus;
   timestamp: string;
+
   environment: string;
   nodeVersion: string;
+
   uptime: number;
   responseTimeMs: number;
 
   services: {
     api: SystemStatusService;
     database: SystemStatusService;
-    reports: SystemStatusService;
   };
 
-  statistics?: {
+  statistics: {
+    organizations: number;
+    users: number;
+    auditLogs: number;
+  };
+}
+
+/* ============================================================
+   RAW BACKEND SYSTEM STATUS TYPES
+   ============================================================ */
+
+interface BackendSystemStatusService {
+  status?: string;
+  responseTimeMs?: number;
+  message?: string;
+}
+
+interface BackendSystemStatus {
+  status?: string;
+
+  timestamp?: string;
+
+  api?: BackendSystemStatusService;
+
+  database?: BackendSystemStatusService;
+
+  platform?: {
     organizations?: number;
     users?: number;
     auditLogs?: number;
   };
+
+  server?: {
+    environment?: string;
+    nodeVersion?: string;
+    uptimeSeconds?: number;
+  };
+
+  message?: string;
+}
+
+interface BackendSystemStatusResponse {
+  success?: boolean;
+  message?: string;
+  status?: BackendSystemStatus | string;
+  data?: BackendSystemStatus | string;
 }
 
 /* ============================================================
@@ -308,7 +353,6 @@ interface AuditLogsResponse {
   message?: string;
   logs?: SuperAdminAuditLog[];
   data?: SuperAdminAuditLog[];
-
   pagination?: AuditLogsPagination;
 }
 
@@ -317,13 +361,6 @@ interface AuditLogResponse {
   message?: string;
   log?: SuperAdminAuditLog;
   data?: SuperAdminAuditLog;
-}
-
-interface SystemStatusResponse {
-  success?: boolean;
-  message?: string;
-  status?: SystemStatus;
-  data?: SystemStatus;
 }
 
 /* ============================================================
@@ -372,49 +409,55 @@ const normalizeOrganizationMember = (
   const user =
     member.user;
 
+  const userId =
+    member.userId ||
+    user?.id ||
+    "";
+
+  const name =
+    member.name ||
+    user?.name ||
+    member.email ||
+    user?.email ||
+    "Unknown user";
+
+  const email =
+    member.email ||
+    user?.email ||
+    "";
+
+  const phone =
+    member.phone ??
+    user?.phone ??
+    null;
+
+  const isVerified =
+    member.isVerified ??
+    user?.isVerified ??
+    false;
+
+  const joinedAt =
+    member.joinedAt ||
+    member.createdAt ||
+    "";
+
   return {
     ...member,
 
-    userId:
-      member.userId ||
-      user?.id ||
-      "",
-
-    name:
-      member.name ||
-      user?.name ||
-      member.email ||
-      user?.email ||
-      "Unknown user",
-
-    email:
-      member.email ||
-      user?.email ||
-      "",
-
-    phone:
-      member.phone ??
-      user?.phone ??
-      null,
-
-    isVerified:
-      member.isVerified ??
-      user?.isVerified ??
-      false,
-
-    joinedAt:
-      member.joinedAt ||
-      member.createdAt ||
-      "",
+    userId,
+    name,
+    email,
+    phone,
+    isVerified,
+    joinedAt,
 
     user:
       user ?? {
-        id: member.userId,
-        name: member.name,
-        email: member.email,
-        phone: member.phone,
-        isVerified:
-          member.isVerified,
+        id: userId,
+        name,
+        email,
+        phone,
+        isVerified,
       },
   };
 };
@@ -454,6 +497,137 @@ const normalizeAuditLog = (
       null,
   };
 };
+
+/* ============================================================
+   SYSTEM STATUS NORMALIZATION
+   ============================================================ */
+
+const normalizeSystemServiceStatus = (
+  status: unknown,
+  fallback: SystemServiceStatus = "UNKNOWN",
+): SystemServiceStatus => {
+  if (
+    typeof status !== "string"
+  ) {
+    return fallback;
+  }
+
+  const normalized =
+    status.trim().toUpperCase();
+
+  switch (normalized) {
+    case "OPERATIONAL":
+      return "OPERATIONAL";
+
+    case "DEGRADED":
+      return "DEGRADED";
+
+    case "DOWN":
+      return "DOWN";
+
+    case "CONNECTED":
+      return "CONNECTED";
+
+    case "DISCONNECTED":
+      return "DISCONNECTED";
+
+    default:
+      return fallback;
+  }
+};
+
+const normalizeSystemStatus = (
+  raw: BackendSystemStatus,
+): SystemStatus => {
+  const apiStatus =
+    normalizeSystemServiceStatus(
+      raw.api?.status,
+      "UNKNOWN",
+    );
+
+  const databaseStatus =
+    normalizeSystemServiceStatus(
+      raw.database?.status,
+      "UNKNOWN",
+    );
+
+  const overallStatus =
+    normalizeSystemServiceStatus(
+      raw.status,
+      "UNKNOWN",
+    );
+
+  const databaseResponseTime =
+    raw.database?.responseTimeMs ??
+    raw.api?.responseTimeMs ??
+    0;
+
+  return {
+    status:
+      overallStatus,
+
+    timestamp:
+      raw.timestamp ??
+      new Date().toISOString(),
+
+    environment:
+      raw.server?.environment ??
+      "unknown",
+
+    nodeVersion:
+      raw.server?.nodeVersion ??
+      "unknown",
+
+    uptime:
+      raw.server?.uptimeSeconds ??
+      0,
+
+    responseTimeMs:
+      databaseResponseTime,
+
+    services: {
+      api: {
+        status:
+          apiStatus,
+
+        responseTimeMs:
+          raw.api?.responseTimeMs,
+
+        message:
+          raw.api?.message,
+      },
+
+      database: {
+        status:
+          databaseStatus,
+
+        responseTimeMs:
+          raw.database?.responseTimeMs,
+
+        message:
+          raw.database?.message,
+      },
+    },
+
+    statistics: {
+      organizations:
+        raw.platform?.organizations ??
+        0,
+
+      users:
+        raw.platform?.users ??
+        0,
+
+      auditLogs:
+        raw.platform?.auditLogs ??
+        0,
+    },
+  };
+};
+
+/* ============================================================
+   QUERY BUILDERS
+   ============================================================ */
 
 const buildPlatformUsersQuery = (
   options: GetPlatformUsersOptions = {},
@@ -807,7 +981,11 @@ export const superAdminService = {
         data?: OrganizationInvitation[];
       };
 
-    return response.data ?? response.invitations ?? [];
+    return (
+      response.data ??
+      response.invitations ??
+      []
+    );
   },
 
   async revokeOrganizationInvitation(
@@ -978,6 +1156,7 @@ export const superAdminService = {
       logs: logs.map(
         normalizeAuditLog,
       ),
+
       pagination,
     };
   },
@@ -1011,21 +1190,26 @@ export const superAdminService = {
 
   async getSystemStatus(): Promise<SystemStatus> {
     const response =
-      await api.get<SystemStatus>(
+      await api.get<BackendSystemStatus>(
         "/super-admin/system-status",
-      ) as unknown as SystemStatusResponse;
+      ) as unknown as BackendSystemStatusResponse;
 
-    const status =
+    const rawStatus =
       response.data ??
       response.status;
 
-    if (!status) {
+    if (
+      !rawStatus ||
+      typeof rawStatus === "string"
+    ) {
       throw new Error(
-        "The server did not return system status.",
+        "The server did not return a valid system status object.",
       );
     }
 
-    return status;
+    return normalizeSystemStatus(
+      rawStatus,
+    );
   },
 };
 

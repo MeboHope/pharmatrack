@@ -22,6 +22,12 @@ import {
 
 import { prisma } from "../prisma.js";
 
+import {
+  passwordResetService,
+} from "../services/passwordReset.js";
+
+import { sendPasswordResetEmail } from "../services/email.js";
+
 const router = Router();
 
 const isNonEmptyString = (
@@ -77,7 +83,6 @@ router.post(
           message:
             "Full name is required.",
         });
-
         return;
       }
 
@@ -87,7 +92,6 @@ router.post(
           message:
             "Please provide a valid email address.",
         });
-
         return;
       }
 
@@ -97,7 +101,6 @@ router.post(
           message:
             "Password must contain at least 12 characters, including uppercase, lowercase, a number, and a special character.",
         });
-
         return;
       }
 
@@ -110,7 +113,6 @@ router.post(
           message:
             "Privileged accounts cannot be created through public registration.",
         });
-
         return;
       }
 
@@ -136,7 +138,8 @@ router.post(
         {
           action:
             "USER_REGISTER",
-          entity: "User",
+          entity:
+            "User",
           entityId:
             result.user.id,
           organizationId:
@@ -171,7 +174,6 @@ router.post(
           message:
             error.message,
         });
-
         return;
       }
 
@@ -204,7 +206,6 @@ router.post(
           message:
             "Please provide a valid email address.",
         });
-
         return;
       }
 
@@ -214,7 +215,6 @@ router.post(
           message:
             "Verification code is required.",
         });
-
         return;
       }
 
@@ -235,7 +235,6 @@ router.post(
           message:
             "Invalid or expired verification code.",
         });
-
         return;
       }
 
@@ -250,7 +249,8 @@ router.post(
         {
           action:
             "USER_EMAIL_VERIFIED",
-          entity: "User",
+          entity:
+            "User",
           entityId:
             result.id,
           ...(result.organizationId && {
@@ -289,7 +289,6 @@ router.post(
           message:
             error.message,
         });
-
         return;
       }
 
@@ -311,8 +310,9 @@ router.post(
     next,
   ) => {
     try {
-      const { email } =
-        req.body ?? {};
+      const {
+        email,
+      } = req.body ?? {};
 
       if (!isValidEmail(email)) {
         res.status(400).json({
@@ -320,7 +320,6 @@ router.post(
           message:
             "Please provide a valid email address.",
         });
-
         return;
       }
 
@@ -338,7 +337,6 @@ router.post(
           message:
             "No account found with this email address.",
         });
-
         return;
       }
 
@@ -352,6 +350,273 @@ router.post(
           "If the account requires verification, a new verification code has been sent.",
       });
     } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/* ============================================================
+   FORGOT PASSWORD
+   ============================================================ */
+
+/*
+ * This endpoint deliberately returns the same successful
+ * response whether or not the email belongs to a user.
+ *
+ * This prevents account enumeration.
+ *
+ * The dedicated passwordResetService:
+ * - generates the cryptographically random token
+ * - stores only its SHA-256 hash
+ * - expires the token after 30 minutes
+ * - invalidates previous unused reset tokens
+ */
+router.post(
+  "/forgot-password",
+  registrationRateLimiter,
+  async (
+    req,
+    res,
+    next,
+  ) => {
+    try {
+      const {
+        email,
+      } = req.body ?? {};
+
+      if (!isValidEmail(email)) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Please provide a valid email address.",
+        });
+        return;
+      }
+
+      const normalizedEmail =
+        normalizeEmail(email);
+
+      const resetRequest =
+        await passwordResetService.createPasswordResetToken(
+          normalizedEmail,
+        );
+
+      /*
+       * Unknown accounts receive exactly the same
+       * public response as known accounts.
+       */
+      if (!resetRequest) {
+        res.json({
+          success: true,
+          message:
+            "If an account exists for that email address, a password reset link has been sent.",
+        });
+        return;
+      }
+
+      const configuredFrontendUrl =
+        process.env.FRONTEND_URL?.trim() ||
+        process.env.APP_URL?.trim() ||
+        "http://localhost:3000";
+
+      const frontendUrl =
+        configuredFrontendUrl.replace(
+          /\/+$/,
+          "",
+        );
+
+      const resetUrl =
+        `${frontendUrl}/reset-password?token=${encodeURIComponent(
+          resetRequest.token,
+        )}`;
+
+      try {
+        await sendPasswordResetEmail({
+          to:
+            resetRequest.email,
+          name:
+            resetRequest.name,
+          resetUrl,
+          expiresInMinutes:
+            passwordResetService.PASSWORD_RESET_EXPIRY_MINUTES,
+        });
+      } catch (emailError) {
+        /*
+         * Do not expose email-provider details to the
+         * client.
+         *
+         * The reset token is removed so that a reset
+         * credential is not left active when delivery
+         * has definitively failed.
+         */
+        console.error(
+          "Password reset email delivery failed:",
+          emailError,
+        );
+
+        try {
+          await prisma.passwordResetToken.deleteMany({
+            where: {
+              userId:
+                resetRequest.userId,
+              usedAt: null,
+            },
+          });
+        } catch (cleanupError) {
+          /*
+           * Cleanup failure must not expose internal
+           * database details to the client.
+           */
+          console.error(
+            "Failed to clean up password reset token after email delivery failure:",
+            cleanupError,
+          );
+        }
+      }
+
+      /*
+       * Always use the same public response.
+       *
+       * Never disclose whether:
+       * - the account exists
+       * - the account is verified
+       * - email delivery succeeded
+       */
+      res.json({
+        success: true,
+        message:
+          "If an account exists for that email address, a password reset link has been sent.",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+/* ============================================================
+   RESET PASSWORD
+   ============================================================ */
+
+/*
+ * Authentication is intentionally NOT required here.
+ *
+ * The short-lived, single-use reset token is the credential
+ * proving possession of the reset link.
+ */
+router.post(
+  "/reset-password",
+  registrationRateLimiter,
+  async (
+    req,
+    res,
+    next,
+  ) => {
+    try {
+      const {
+        token,
+        newPassword,
+        password,
+      } = req.body ?? {};
+
+      if (!isNonEmptyString(token)) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Invalid or expired password reset link.",
+        });
+        return;
+      }
+
+      /*
+       * newPassword is the canonical field.
+       *
+       * password is accepted temporarily for compatibility
+       * with any older client implementation.
+       */
+      const suppliedPassword =
+        isNonEmptyString(
+          newPassword,
+        )
+          ? newPassword
+          : password;
+
+      if (
+        !isNonEmptyString(
+          suppliedPassword,
+        )
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "New password is required.",
+        });
+        return;
+      }
+
+      if (
+        !isStrongPassword(
+          suppliedPassword,
+        )
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
+        });
+        return;
+      }
+
+      const result =
+        await passwordResetService.resetPassword(
+          token,
+          suppliedPassword,
+        );
+
+      /*
+       * The service returns the actual user ID after
+       * the reset succeeds.
+       *
+       * Never record the raw reset token or password.
+       */
+      await recordAudit(
+        req,
+        {
+          action:
+            "USER_PASSWORD_RESET",
+          entity:
+            "User",
+          entityId:
+            result.userId,
+          details: {
+            method:
+              "SELF_SERVICE_PASSWORD_RESET",
+          },
+        },
+      );
+
+      res.json({
+        success: true,
+        message:
+          "Your password has been reset successfully. Please sign in with your new password.",
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (
+          error.message ===
+            "Invalid or expired password reset link." ||
+          error.message ===
+            "New password must be different from your current password."
+        )
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            error.message,
+        });
+        return;
+      }
+
       next(error);
     }
   },
@@ -381,7 +646,6 @@ router.post(
           message:
             "Please provide a valid email address.",
         });
-
         return;
       }
 
@@ -391,7 +655,6 @@ router.post(
           message:
             "Invalid email or password.",
         });
-
         return;
       }
 
@@ -461,7 +724,6 @@ router.post(
           message:
             "Invalid email or password.",
         });
-
         return;
       }
 
@@ -496,7 +758,6 @@ router.post(
           message:
             "Refresh token is required.",
         });
-
         return;
       }
 
@@ -580,7 +841,6 @@ router.get(
           message:
             "Authentication required.",
         });
-
         return;
       }
 
@@ -606,7 +866,6 @@ router.get(
           message:
             "User account no longer exists.",
         });
-
         return;
       }
 
@@ -616,7 +875,6 @@ router.get(
           message:
             "Email verification is required.",
         });
-
         return;
       }
 
@@ -632,29 +890,23 @@ router.get(
           success: true,
           data: {
             ...user,
-
             organizationId:
               null,
-
             organizationName:
               null,
-
             organizationType:
               null,
-
             organizationStatus:
               null,
-
             organizationRole:
               "SUPER_ADMIN",
           },
         });
-
         return;
       }
 
       /*
-       * The JWT is now authoritative for the
+       * The JWT is authoritative for the
        * currently selected organization.
        */
       const organizationId =
@@ -666,7 +918,6 @@ router.get(
           message:
             "Organization context is required.",
         });
-
         return;
       }
 
@@ -682,7 +933,6 @@ router.get(
           message:
             "You are no longer assigned to the selected active organization.",
         });
-
         return;
       }
 
@@ -693,10 +943,8 @@ router.get(
               userId,
               organizationId,
             },
-
             select: {
               role: true,
-
               organization: {
                 select: {
                   id: true,
@@ -715,35 +963,23 @@ router.get(
           message:
             "Organization membership not found.",
         });
-
         return;
       }
 
       res.json({
         success: true,
-
         data: {
           ...user,
-
-          /*
-           * The membership role is authoritative
-           * within the selected organization.
-           */
           role:
             authenticatedUser.role,
-
           organizationId:
             membership.organization.id,
-
           organizationName:
             membership.organization.name,
-
           organizationType:
             membership.organization.type,
-
           organizationStatus:
             membership.organization.status,
-
           organizationRole:
             membership.role,
         },

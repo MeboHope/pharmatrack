@@ -1,4 +1,5 @@
 import React, {
+  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -24,6 +25,8 @@ import type {
 
 import type { InventoryProduct } from './Inventory';
 
+import { api } from '../services/api';
+
 import {
   transactionService,
   type CreateTransactionInput,
@@ -48,6 +51,13 @@ interface CartItem {
   duration: number;
   durationUnit: string;
   specialInstructions: string;
+}
+
+interface OrganizationClinician {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
 }
 
 const frequencies: HealthcareFrequency[] = [
@@ -158,9 +168,18 @@ export const Dispensing: React.FC<
   const [diagnosis, setDiagnosis] =
     useState('');
 
-  const [clinicianName, setClinicianName] =
-    useState(
-      settings?.clinicianName || '',
+  const [clinicians, setClinicians] =
+    useState<OrganizationClinician[]>([]);
+
+  const [cliniciansLoading, setCliniciansLoading] =
+    useState(false);
+
+  const [clinicianId, setClinicianId] =
+    useState('');
+
+  const [recentTransactions, setRecentTransactions] =
+    useState<DispenseTransaction[]>(
+      transactions,
     );
 
   const [discount, setDiscount] =
@@ -197,6 +216,72 @@ export const Dispensing: React.FC<
 
   const [selectedQty, setSelectedQty] =
     useState(1);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadClinicians = async () => {
+      setCliniciansLoading(true);
+
+      try {
+        const response =
+          await api.get<OrganizationClinician[]>(
+            '/transactions/clinicians',
+          );
+
+        if (cancelled) {
+          return;
+        }
+
+        const payload = response.data;
+
+        setClinicians(
+          Array.isArray(payload)
+            ? payload
+            : [],
+        );
+      } catch (caught) {
+        if (!cancelled) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : 'Failed to load registered clinicians.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setCliniciansLoading(false);
+        }
+      }
+    };
+
+    void loadClinicians();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setRecentTransactions((current) => {
+      const incomingIds = new Set(
+        transactions.map(
+          (transaction) => transaction.id,
+        ),
+      );
+
+      const locallyCreated =
+        current.filter(
+          (transaction) =>
+            !incomingIds.has(transaction.id),
+        );
+
+      return [
+        ...locallyCreated,
+        ...transactions,
+      ];
+    });
+  }, [transactions]);
 
   const filteredProducts = useMemo(() => {
     const term =
@@ -407,6 +492,7 @@ export const Dispensing: React.FC<
     setPatientName('');
     setPhone('');
     setDiagnosis('');
+    setClinicianId('');
     setDiscount(0);
     setPaymentMethod('Cash');
     setCashTendered('');
@@ -427,9 +513,9 @@ export const Dispensing: React.FC<
       return;
     }
 
-    if (!clinicianName.trim()) {
+    if (!clinicianId) {
       setError(
-        'Clinician name is required.',
+        'Please select a registered prescribing clinician.',
       );
       return;
     }
@@ -492,8 +578,7 @@ export const Dispensing: React.FC<
             patientName.trim(),
           phone:
             phone.trim() || undefined,
-          clinicianName:
-            clinicianName.trim(),
+          clinicianId,
           prescriptionDate:
             new Date()
               .toISOString()
@@ -522,6 +607,16 @@ export const Dispensing: React.FC<
       await onCompleteTransaction(
         created,
       );
+
+      setRecentTransactions((current) => [
+        created,
+        ...current.filter(
+          (transaction) =>
+            transaction.id !== created.id,
+        ),
+      ]);
+
+      setShowRecent(true);
 
       setSuccess(
         `Transaction ${created.transactionNo || created.id} completed successfully.`,
@@ -712,19 +807,55 @@ export const Dispensing: React.FC<
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Clinician *
+                <label
+                  htmlFor="prescribing-clinician"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Prescribing Clinician *
                 </label>
 
-                <input
-                  value={clinicianName}
+                <select
+                  id="prescribing-clinician"
+                  value={clinicianId}
                   onChange={(event) =>
-                    setClinicianName(
+                    setClinicianId(
                       event.target.value,
                     )
                   }
-                  className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm"
-                />
+                  disabled={
+                    cliniciansLoading ||
+                    saving
+                  }
+                  className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white disabled:bg-slate-100"
+                >
+                  <option value="">
+                    {cliniciansLoading
+                      ? 'Loading registered clinicians...'
+                      : 'Select prescribing clinician'}
+                  </option>
+
+                  {clinicians.map(
+                    (clinician) => (
+                      <option
+                        key={clinician.id}
+                        value={clinician.id}
+                      >
+                        {clinician.name}
+                        {clinician.email
+                          ? ` — ${clinician.email}`
+                          : ''}
+                      </option>
+                    ),
+                  )}
+                </select>
+
+                {!cliniciansLoading &&
+                  clinicians.length === 0 && (
+                    <p className="mt-1 text-xs text-amber-600">
+                      No registered clinicians are
+                      available in this organization.
+                    </p>
+                  )}
               </div>
 
               <div>
@@ -870,14 +1001,18 @@ export const Dispensing: React.FC<
             <input
               type="number"
               min={1}
-              max={selectedProduct.totalQuantity || 0}
+              max={
+                selectedProduct.totalQuantity ||
+                0
+              }
               value={selectedQty}
               onChange={(event) =>
                 setSelectedQty(
                   Math.max(
                     1,
                     Math.min(
-                      selectedProduct.totalQuantity || 0,
+                      selectedProduct.totalQuantity ||
+                        0,
                       Number(
                         event.target.value,
                       ) || 1,
@@ -1392,7 +1527,7 @@ export const Dispensing: React.FC<
               </thead>
 
               <tbody className="divide-y">
-                {transactions
+                {recentTransactions
                   .slice(0, 10)
                   .map(
                     (transaction) => (
@@ -1437,7 +1572,7 @@ export const Dispensing: React.FC<
                     ),
                   )}
 
-                {transactions.length ===
+                {recentTransactions.length ===
                   0 && (
                   <tr>
                     <td

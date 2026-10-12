@@ -11,7 +11,6 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
-  ShieldCheck,
   UserPlus,
 } from "lucide-react";
 
@@ -303,9 +302,12 @@ export const AuthModal: React.FC<
       setResetError("");
       setResetMessage("");
 
+      const normalizedEmail =
+        resetEmail.trim().toLowerCase();
+
       if (
         !isValidEmail(
-          resetEmail,
+          normalizedEmail,
         )
       ) {
         setResetError(
@@ -314,14 +316,30 @@ export const AuthModal: React.FC<
         return;
       }
 
-      /*
-       * Password reset remains deliberately
-       * disabled until the secure server-side
-       * reset mechanism is implemented.
-       */
-      setResetError(
-        "Password reset is not yet enabled on the server. Your account remains unchanged.",
-      );
+      setIsSubmitting(true);
+
+      try {
+        await authService.requestPasswordReset(
+          normalizedEmail,
+        );
+
+        /*
+         * The server deliberately returns a generic
+         * response so that the application never
+         * reveals whether an account exists.
+         */
+        setResetMessage(
+          "If an account exists for that email address, a password reset link has been sent. Please check your email and follow the link to create a new password.",
+        );
+      } catch (error) {
+        setResetError(
+          error instanceof Error
+            ? error.message
+            : "Unable to process your password reset request. Please try again.",
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
     };
 
   const switchMode = (
@@ -658,9 +676,14 @@ export const AuthModal: React.FC<
 
               <button
                 type="submit"
-                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] rounded-xl shadow-sm transition-colors"
+                disabled={
+                  isSubmitting
+                }
+                className="w-full py-2.5 text-sm font-bold text-white bg-[#22577A] hover:bg-[#1b4662] disabled:opacity-60 disabled:cursor-not-allowed rounded-xl shadow-sm transition-colors"
               >
-                Request Password Reset
+                {isSubmitting
+                  ? "Sending Reset Link..."
+                  : "Request Password Reset"}
               </button>
 
               <button
@@ -677,9 +700,10 @@ export const AuthModal: React.FC<
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-[10px] leading-relaxed text-slate-500 text-center">
-                  If you cannot access your
-                  account, contact your pharmacy or
-                  clinic administrator for assistance.
+                  If an account exists for the
+                  email address, PharmaTrack will
+                  send a secure password reset link.
+                  The link expires after 30 minutes.
                 </p>
               </div>
             </form>

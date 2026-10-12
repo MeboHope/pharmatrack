@@ -1,4 +1,4 @@
-import {
+﻿import {
   BarChart3,
   Building2,
   ChevronDown,
@@ -522,7 +522,7 @@ export function Sidebar({
                             "CLINIC"
                               ? "Clinic"
                               : "Pharmacy"}{" "}
-                            ·{" "}
+                            Â·{" "}
                             {
                               organization.role
                             }
@@ -637,7 +637,11 @@ export function Sidebar({
 
           <button
             type="button"
-            onClick={onLogoutClick}
+            onClick={() => {
+          setMobileMenuOpen(false);
+          setOrganizationMenuOpen(false);
+          onLogoutClick();
+        }}
             className="mt-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-white/15 bg-[#1b4662] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#163a52]"
           >
             <LogOut className="h-4 w-4" />
@@ -739,7 +743,7 @@ export function Sidebar({
             ? "translate-x-0"
             : "-translate-x-full"
         }`}
-        aria-hidden={!mobileMenuOpen}
+        inert={!mobileMenuOpen}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4">
           <PharmaTrackLogo
@@ -777,3 +781,4 @@ export function Sidebar({
 }
 
 export default Sidebar;
+

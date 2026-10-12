@@ -99,30 +99,39 @@ model AuditLog {
 }
 
 model DispenseTransaction {
-  id               String            @id @default(cuid())
-  transactionNo    String            @unique
-  date             DateTime          @default(now())
-  patientType      PatientType
-  patientName      String
-  phone            String?
-  clinicianName    String
+  id            String      @id @default(cuid())
+  transactionNo String      @unique
+  date          DateTime    @default(now())
+  patientType   PatientType
+  patientName   String
+  phone         String?
+
+  clinicianName String
+  clinicianId   String?
+
   prescriptionDate DateTime?
   diagnosis        String?
-  subtotal         Decimal           @db.Decimal(12, 2)
-  discount         Decimal           @default(0) @db.Decimal(12, 2)
-  totalAmount      Decimal           @db.Decimal(12, 2)
-  paymentMethod    PaymentMethod
-  cashTendered     Decimal?          @db.Decimal(12, 2)
-  changeAmount     Decimal?          @db.Decimal(12, 2)
-  mpesaCode        String?
-  status           TransactionStatus @default(COMPLETED)
-  createdAt        DateTime          @default(now())
-  patientId        String?
-  userId           String?
-  organizationId   String
+
+  subtotal    Decimal @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal @db.Decimal(12, 2)
+
+  paymentMethod PaymentMethod
+
+  cashTendered Decimal? @db.Decimal(12, 2)
+  changeAmount Decimal? @db.Decimal(12, 2)
+  mpesaCode    String?
+
+  status TransactionStatus @default(COMPLETED)
+
+  createdAt      DateTime @default(now())
+  patientId      String?
+  userId         String?
+  organizationId String
 
   Patient          Patient?           @relation(fields: [patientId], references: [id])
-  User             User?              @relation(fields: [userId], references: [id])
+  User             User?              @relation("TransactionDispenser", fields: [userId], references: [id], onDelete: SetNull)
+  Clinician        User?              @relation("TransactionClinician", fields: [clinicianId], references: [id], onDelete: SetNull)
   Organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   PrescriptionItem PrescriptionItem[]
 
@@ -130,6 +139,8 @@ model DispenseTransaction {
   @@index([patientId])
   @@index([organizationId])
   @@index([status])
+  @@index([clinicianId])
+  @@index([userId])
 }
 
 model Drug {
@@ -310,11 +321,13 @@ model PrescriptionItem {
   lineTotal           Decimal             @db.Decimal(12, 2)
   transactionId       String
   productId           String?
+  userId              String?
 
   Drug                Drug?                @relation(fields: [drugId], references: [id])
   Product             Product?             @relation(fields: [productId], references: [id])
   DispenseTransaction DispenseTransaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   allocations         DispenseAllocation[]
+  user                User?                @relation("PrescriptionItemDispenser", fields: [userId], references: [id])
 
   @@index([drugId])
   @@index([productId])
@@ -396,9 +409,8 @@ model StockAdjustment {
 
   User         User?        @relation(fields: [userId], references: [id])
   Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-
-  Product Product?   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  Batch   DrugBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  Product      Product?     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  Batch        DrugBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
 
   @@index([date])
   @@index([drugId])
@@ -437,14 +449,31 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  AuditLog            AuditLog[]
-  DispenseTransaction DispenseTransaction[]
-  StockAdjustment     StockAdjustment[]
-  StockMovement       StockMovement[]
-  EmailVerification   EmailVerification?
-  RefreshToken        RefreshToken[]
-  memberships         OrganizationMembership[]
-  sentInvitations     OrganizationInvitation[] @relation("OrganizationInvitationSender")
+  AuditLog AuditLog[]
+
+  /**
+   * Transactions processed/dispensed by this user.
+   */
+  dispensedTransactions DispenseTransaction[] @relation("TransactionDispenser")
+
+  /**
+   * Transactions for which this user was the registered clinician.
+   */
+  clinicianTransactions DispenseTransaction[] @relation("TransactionClinician")
+
+  /**
+   * Prescription items where this user recorded the dispenser.
+   */
+  prescriptionItems PrescriptionItem[] @relation("PrescriptionItemDispenser")
+
+  StockAdjustment    StockAdjustment[]
+  StockMovement      StockMovement[]
+  EmailVerification  EmailVerification?
+  RefreshToken       RefreshToken[]
+  PasswordResetToken PasswordResetToken[]
+
+  memberships     OrganizationMembership[]
+  sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationSender")
 
   @@index([role])
 }
@@ -480,6 +509,21 @@ model RefreshToken {
   @@index([organizationId])
   @@index([expiresAt])
   @@index([revokedAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([usedAt])
 }
 
 enum OrganizationType {

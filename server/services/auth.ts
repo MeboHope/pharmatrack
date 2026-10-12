@@ -68,6 +68,10 @@ export interface RegisterResult {
   verificationCode: string;
 }
 
+export interface PasswordResetRequestResult {
+  requested: boolean;
+}
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
@@ -76,8 +80,8 @@ if (!JWT_SECRET) {
   );
 }
 
-// Type assertion: JWT_SECRET is guaranteed to be a string after the check above
-const JWT_SECRET_FINAL = JWT_SECRET as string;
+const JWT_SECRET_FINAL =
+  JWT_SECRET as string;
 
 const ACCESS_TOKEN_EXPIRES_IN =
   process.env.ACCESS_TOKEN_EXPIRES_IN ||
@@ -90,6 +94,8 @@ const REFRESH_TOKEN_EXPIRES_IN =
 const VERIFICATION_CODE_EXPIRY_MINUTES = 15;
 
 const MAX_VERIFICATION_ATTEMPTS = 5;
+
+const PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = 30;
 
 export const DEFAULT_ORGANIZATION_ID =
   "pharmatrack-default-org";
@@ -126,6 +132,21 @@ function generateRefreshToken(): string {
 }
 
 function hashRefreshToken(
+  token: string,
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
+}
+
+function generatePasswordResetToken(): string {
+  return crypto
+    .randomBytes(32)
+    .toString("hex");
+}
+
+function hashPasswordResetToken(
   token: string,
 ): string {
   return crypto
@@ -660,22 +681,12 @@ export async function registerUser(
     );
   }
 
-  /*
-   * First validate the structure.
-   */
   if (!isValidEmail(email)) {
     throw new Error(
       "Please enter a valid email address.",
     );
   }
 
-  /*
-   * Then verify that the email domain has
-   * usable mail/DNS configuration.
-   *
-   * This prevents registration using domains
-   * that clearly cannot receive email.
-   */
   const emailDomainConfigured =
     await isEmailDomainConfigured(
       email,
@@ -801,17 +812,6 @@ export async function registerUser(
           },
         );
 
-        /*
-         * Prisma relation name is "user".
-         *
-         * The schema defines:
-         *
-         * user User @relation(...)
-         *
-         * Therefore we connect through the
-         * relation instead of supplying userId
-         * directly to the checked create input.
-         */
         await tx.emailVerification.create(
           {
             data: {
@@ -1002,14 +1002,6 @@ export async function resendVerificationCode(
     );
   }
 
-  /*
-   * We deliberately do not run DNS validation
-   * here.
-   *
-   * The original registration already passed
-   * domain validation, and the user may simply
-   * be requesting another verification code.
-   */
   const verificationCode =
     generateVerificationCode();
 
@@ -1605,9 +1597,7 @@ export async function adminResetPassword(
   }
 
   const passwordHash =
-    hashPassword(
-      newPassword,
-    );
+    hashPassword(newPassword);
 
   await prisma.user.update({
     where: {
@@ -1622,6 +1612,299 @@ export async function adminResetPassword(
   await revokeAllRefreshTokens(
     userId,
   );
+}
+
+/* ============================================================
+   SELF-SERVICE PASSWORD RESET
+   ============================================================ */
+
+/**
+ * Creates a password reset token for a verified account.
+ *
+ * Security properties:
+ * - Raw token is never stored.
+ * - Token is cryptographically random.
+ * - Existing reset tokens are invalidated.
+ * - Token expires after 30 minutes.
+ * - Caller receives the raw token only once.
+ */
+export async function createPasswordResetToken(
+  email: string,
+): Promise<{
+  requested: boolean;
+  userId?: string;
+  email?: string;
+  name?: string;
+  token?: string;
+  expiresAt?: Date;
+}> {
+  const normalizedEmail =
+    normalizeEmail(email);
+
+  const user =
+    await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isVerified: true,
+      },
+    });
+
+  /*
+   * Never reveal whether an email belongs to
+   * an account.
+   */
+  if (!user || !user.isVerified) {
+    return {
+      requested: true,
+    };
+  }
+
+  const rawToken =
+    generatePasswordResetToken();
+
+  const tokenHash =
+    hashPasswordResetToken(
+      rawToken,
+    );
+
+  const expiresAt =
+    new Date(
+      Date.now() +
+        PASSWORD_RESET_TOKEN_EXPIRY_MINUTES *
+          60 *
+          1000,
+    );
+
+  await prisma.$transaction(
+    async (tx) => {
+      /*
+       * Invalidate all older reset tokens for
+       * this account.
+       */
+      await tx.passwordResetToken.deleteMany(
+        {
+          where: {
+            userId: user.id,
+          },
+        },
+      );
+
+      await tx.passwordResetToken.create({
+        data: {
+          id: crypto.randomUUID(),
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      });
+    },
+  );
+
+  return {
+    requested: true,
+    userId: user.id,
+    email: user.email,
+    name: user.name,
+    token: rawToken,
+    expiresAt,
+  };
+}
+
+/**
+ * Completes a password reset using a one-time
+ * password reset token.
+ */
+export async function resetPassword(
+  rawToken: string,
+  newPassword: string,
+): Promise<{
+  userId: string;
+  organizationId?: string | null;
+}> {
+  if (!isStrongPassword(newPassword)) {
+    throw new Error(
+      "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
+    );
+  }
+
+  const token =
+    rawToken.trim();
+
+  if (
+    !/^[a-f0-9]{64}$/i.test(token)
+  ) {
+    throw new Error(
+      "Invalid or expired password reset link.",
+    );
+  }
+
+  const tokenHash =
+    hashPasswordResetToken(token);
+
+  const resetRecord =
+    await prisma.passwordResetToken.findUnique(
+      {
+        where: {
+          tokenHash,
+        },
+        include: {
+          user: true,
+        },
+      },
+    );
+
+  if (!resetRecord) {
+    throw new Error(
+      "Invalid or expired password reset link.",
+    );
+  }
+
+  if (resetRecord.usedAt) {
+    throw new Error(
+      "This password reset link has already been used.",
+    );
+  }
+
+  if (
+    resetRecord.expiresAt <
+    new Date()
+  ) {
+    throw new Error(
+      "Invalid or expired password reset link.",
+    );
+  }
+
+  const user =
+    resetRecord.user;
+
+  if (
+    verifyPassword(
+      newPassword,
+      user.passwordHash,
+    )
+  ) {
+    throw new Error(
+      "New password must be different from the current password.",
+    );
+  }
+
+  const passwordHash =
+    hashPassword(
+      newPassword,
+    );
+
+  let organizationId:
+    | string
+    | null =
+    null;
+
+  const result =
+    await prisma.$transaction(
+      async (tx) => {
+        /*
+         * Claim the token atomically.
+         *
+         * This prevents the same reset token from
+         * being successfully consumed by two
+         * simultaneous requests.
+         */
+        const claimed =
+          await tx.passwordResetToken.updateMany(
+            {
+              where: {
+                id: resetRecord.id,
+                usedAt: null,
+                expiresAt: {
+                  gt: new Date(),
+                },
+              },
+              data: {
+                usedAt: new Date(),
+              },
+            },
+          );
+
+        if (claimed.count !== 1) {
+          throw new Error(
+            "Invalid or expired password reset link.",
+          );
+        }
+
+        const updatedUser =
+          await tx.user.update({
+            where: {
+              id: user.id,
+            },
+            data: {
+              passwordHash,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+        /*
+         * A password reset invalidates every
+         * existing authenticated session.
+         */
+        await tx.refreshToken.updateMany(
+          {
+            where: {
+              userId: user.id,
+              revokedAt: null,
+            },
+            data: {
+              revokedAt: new Date(),
+            },
+          },
+        );
+
+        /*
+         * Remove all remaining reset tokens for
+         * this account. The consumed token is
+         * removed as well after it has been
+         * atomically claimed.
+         */
+        await tx.passwordResetToken.deleteMany(
+          {
+            where: {
+              userId: user.id,
+            },
+          },
+        );
+
+        const membership =
+          await tx.organizationMembership.findFirst(
+            {
+              where: {
+                userId: user.id,
+              },
+              orderBy: {
+                createdAt: "asc",
+              },
+              select: {
+                organizationId: true,
+              },
+            },
+          );
+
+        organizationId =
+          membership?.organizationId ??
+          null;
+
+        return updatedUser;
+      },
+    );
+
+  return {
+    userId: result.id,
+    organizationId,
+  };
 }
 
 /* ============================================================
@@ -1688,6 +1971,10 @@ export const authService = {
   changePassword,
 
   adminResetPassword,
+
+  createPasswordResetToken,
+
+  resetPassword,
 
   getAuthenticatedUser,
 

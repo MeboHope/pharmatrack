@@ -29,12 +29,28 @@ export interface CreateDispenseItemInput {
 }
 
 export interface CreateTransactionInput {
-  patientType: "Walk-in Patient" | "Registered Patient";
+  patientType:
+    | "Walk-in Patient"
+    | "Registered Patient";
+
   patientId?: string;
+
   patientName: string;
+
   phone?: string;
-  clinicianName: string;
+
+  /**
+   * Registered clinician responsible for the prescription.
+   *
+   * The backend validates that this user:
+   * - exists
+   * - belongs to the current organization
+   * - has the CLINICIAN organization role
+   */
+  clinicianId: string;
+
   prescriptionDate?: string;
+
   diagnosis?: string;
 
   items: CreateDispenseItemInput[];
@@ -46,17 +62,15 @@ export interface CreateTransactionInput {
    */
   discount: number;
 
-  paymentMethod: "Cash" | "M-Pesa";
+  paymentMethod:
+    | "Cash"
+    | "M-Pesa";
+
   cashTendered?: number;
+
   mpesaCode?: string;
 }
 
-/**
- * Backend FEFO allocation shape.
- *
- * This is intentionally internal to the normalisation layer because
- * the existing UI still consumes PrescriptionItem.
- */
 interface BackendDispenseAllocation {
   id?: string;
   productId?: string;
@@ -64,7 +78,15 @@ interface BackendDispenseAllocation {
   quantity?: number;
   unitPrice?: number | string;
   lineTotal?: number | string;
+
   batch?: {
+    id?: string;
+    batchNo?: string;
+    expiryDate?: string;
+    qty?: number;
+  };
+
+  Batch?: {
     id?: string;
     batchNo?: string;
     expiryDate?: string;
@@ -72,21 +94,20 @@ interface BackendDispenseAllocation {
   };
 }
 
-/**
- * Backend prescription item may contain the new Product/Allocation
- * fields while the existing frontend still expects the legacy-shaped
- * PrescriptionItem object.
- */
 interface BackendPrescriptionItem
   extends Partial<PrescriptionItem> {
   id?: string;
+
   productId?: string | null;
+
   allocations?: BackendDispenseAllocation[];
+
   Drug?: {
     id?: string;
     code?: string;
     name?: string;
   } | null;
+
   Product?: {
     id?: string;
     code?: string;
@@ -95,42 +116,57 @@ interface BackendPrescriptionItem
 }
 
 interface BackendTransaction {
-  id: string;
+  id?: string;
+
   transactionNo?: string;
+
   date?: string;
+
   createdAt?: string;
 
-  patientType:
+  patientType?:
     | "WALK_IN"
     | "REGISTERED"
     | "Walk-in Patient"
     | "Registered Patient";
 
   patientId?: string | null;
-  patientName: string;
+
+  patientName?: string;
+
   phone?: string | null;
-  clinicianName: string;
+
+  clinicianId?: string | null;
+
+  clinicianName?: string;
+
   prescriptionDate?: string | null;
+
   diagnosis?: string | null;
 
   items?: BackendPrescriptionItem[];
+
   PrescriptionItem?: BackendPrescriptionItem[];
 
   subtotal?: number | string | null;
+
   discount?: number | string | null;
+
   totalAmount?: number | string | null;
 
-  paymentMethod:
+  paymentMethod?:
     | "CASH"
     | "MPESA"
     | "Cash"
     | "M-Pesa";
 
   cashTendered?: number | string | null;
+
   changeAmount?: number | string | null;
+
   mpesaCode?: string | null;
 
-  status:
+  status?:
     | "COMPLETED"
     | "CANCELLED"
     | "PENDING"
@@ -139,20 +175,65 @@ interface BackendTransaction {
     | "Pending";
 }
 
+/**
+ * Some transaction endpoints may return:
+ *
+ * {
+ *   success: true,
+ *   data: transaction
+ * }
+ *
+ * Others may return:
+ *
+ * {
+ *   success: true,
+ *   data: {
+ *     transaction
+ *   }
+ *
+ * }
+ *
+ * This helper normalises both shapes.
+ */
+interface BackendTransactionContainer {
+  transaction?: BackendTransaction;
+  data?: BackendTransaction;
+}
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null
+  );
+}
+
 function toNumber(
-  value: number | string | null | undefined,
+  value:
+    | number
+    | string
+    | null
+    | undefined,
 ): number {
-  if (value === null || value === undefined) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
     return 0;
   }
 
   const parsed = Number(value);
 
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed)
+    ? parsed
+    : 0;
 }
 
 function normalisePatientType(
-  value: BackendTransaction["patientType"],
+  value:
+    | BackendTransaction["patientType"]
+    | undefined,
 ): DispenseTransaction["patientType"] {
   switch (value) {
     case "REGISTERED":
@@ -167,7 +248,9 @@ function normalisePatientType(
 }
 
 function normalisePaymentMethod(
-  value: BackendTransaction["paymentMethod"],
+  value:
+    | BackendTransaction["paymentMethod"]
+    | undefined,
 ): DispenseTransaction["paymentMethod"] {
   switch (value) {
     case "MPESA":
@@ -182,7 +265,9 @@ function normalisePaymentMethod(
 }
 
 function normaliseStatus(
-  value: BackendTransaction["status"],
+  value:
+    | BackendTransaction["status"]
+    | undefined,
 ): DispenseTransaction["status"] {
   switch (value) {
     case "CANCELLED":
@@ -301,11 +386,17 @@ function normaliseRoute(
 function normalisePrescriptionItem(
   item: BackendPrescriptionItem,
 ): PrescriptionItem {
-  const allocations = Array.isArray(item.allocations)
-    ? item.allocations
-    : [];
+  const allocations =
+    Array.isArray(item.allocations)
+      ? item.allocations
+      : [];
 
-  const firstAllocation = allocations[0];
+  const firstAllocation =
+    allocations[0];
+
+  const firstBatch =
+    firstAllocation?.batch ??
+    firstAllocation?.Batch;
 
   const productCode =
     item.Product?.code ??
@@ -316,9 +407,6 @@ function normalisePrescriptionItem(
     item.Product?.name ??
     item.drugName ??
     "";
-
-  const firstBatch =
-    firstAllocation?.batch;
 
   const batchNo =
     firstBatch?.batchNo ??
@@ -333,11 +421,15 @@ function normalisePrescriptionItem(
   const quantity =
     Number(item.qty ?? 0);
 
-  const allocationTotal = allocations.reduce(
-    (sum, allocation) =>
-      sum + toNumber(allocation.lineTotal),
-    0,
-  );
+  const allocationTotal =
+    allocations.reduce(
+      (sum, allocation) =>
+        sum +
+        toNumber(
+          allocation.lineTotal,
+        ),
+      0,
+    );
 
   const lineTotal =
     allocationTotal > 0
@@ -358,32 +450,44 @@ function normalisePrescriptionItem(
       item.productId ??
       "",
 
-    drugCode: productCode,
+    drugCode:
+      productCode,
 
-    drugName: productName,
+    drugName:
+      productName,
 
     batchNo,
 
     expiryDate,
 
     availableQty:
-      Number(item.availableQty ?? 0),
+      Number(
+        item.availableQty ?? 0,
+      ),
 
-    qty: quantity,
+    qty:
+      quantity,
 
     unitPrice,
 
     frequency:
-      normaliseFrequency(item.frequency),
+      normaliseFrequency(
+        item.frequency,
+      ),
 
     route:
-      normaliseRoute(item.route),
+      normaliseRoute(
+        item.route,
+      ),
 
     duration:
-      Number(item.duration ?? 0),
+      Number(
+        item.duration ?? 0,
+      ),
 
     durationUnit:
-      item.durationUnit ?? "Days",
+      item.durationUnit ??
+      "Days",
 
     specialInstructions:
       item.specialInstructions ??
@@ -396,15 +500,29 @@ function normalisePrescriptionItem(
 function normaliseTransaction(
   transaction: BackendTransaction,
 ): DispenseTransaction {
+  if (
+    !transaction ||
+    !transaction.id
+  ) {
+    throw new Error(
+      "The server returned an invalid transaction record.",
+    );
+  }
+
   const rawItems =
-    Array.isArray(transaction.items)
+    Array.isArray(
+      transaction.items,
+    )
       ? transaction.items
-      : Array.isArray(transaction.PrescriptionItem)
+      : Array.isArray(
+            transaction.PrescriptionItem,
+          )
         ? transaction.PrescriptionItem
         : [];
 
   return {
-    id: transaction.id,
+    id:
+      transaction.id,
 
     transactionNo:
       transaction.transactionNo ??
@@ -421,14 +539,20 @@ function normaliseTransaction(
       ),
 
     patientName:
-      transaction.patientName,
+      transaction.patientName ??
+      "",
 
     phone:
       transaction.phone ??
       undefined,
 
+    clinicianId:
+      transaction.clinicianId ??
+      undefined,
+
     clinicianName:
-      transaction.clinicianName,
+      transaction.clinicianName ??
+      "",
 
     prescriptionDate:
       transaction.prescriptionDate ??
@@ -444,13 +568,19 @@ function normaliseTransaction(
       ),
 
     subtotal:
-      toNumber(transaction.subtotal),
+      toNumber(
+        transaction.subtotal,
+      ),
 
     discount:
-      toNumber(transaction.discount),
+      toNumber(
+        transaction.discount,
+      ),
 
     totalAmount:
-      toNumber(transaction.totalAmount),
+      toNumber(
+        transaction.totalAmount,
+      ),
 
     paymentMethod:
       normalisePaymentMethod(
@@ -459,7 +589,7 @@ function normaliseTransaction(
 
     cashTendered:
       transaction.cashTendered !==
-      null &&
+        null &&
       transaction.cashTendered !==
         undefined
         ? toNumber(
@@ -469,7 +599,7 @@ function normaliseTransaction(
 
     changeAmount:
       transaction.changeAmount !==
-      null &&
+        null &&
       transaction.changeAmount !==
         undefined
         ? toNumber(
@@ -488,6 +618,136 @@ function normaliseTransaction(
   };
 }
 
+/**
+ * Extract a transaction from the ApiEnvelope returned by api.ts.
+ *
+ * The normal expected response is:
+ *
+ * {
+ *   success: true,
+ *   data: transaction
+ * }
+ *
+ * But this also safely handles:
+ *
+ * {
+ *   success: true,
+ *   data: {
+ *     transaction: transaction
+ *   }
+ * }
+ *
+ * and a raw transaction response that has already been wrapped
+ * by requestEnvelope().
+ */
+function extractTransaction(
+  value: unknown,
+): BackendTransaction {
+  if (!value) {
+    throw new Error(
+      "The server completed the request but returned no transaction data.",
+    );
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(
+      "The server returned an invalid transaction response.",
+    );
+  }
+
+  if (
+    typeof value.id ===
+    "string"
+  ) {
+    return value as unknown as BackendTransaction;
+  }
+
+  const container =
+    value as BackendTransactionContainer;
+
+  if (
+    container.transaction &&
+    isRecord(
+      container.transaction,
+    )
+  ) {
+    return container.transaction;
+  }
+
+  if (
+    container.data &&
+    isRecord(container.data)
+  ) {
+    if (
+      typeof container.data.id ===
+      "string"
+    ) {
+      return container.data;
+    }
+
+    const nested =
+      container.data as BackendTransactionContainer;
+
+    if (
+      nested.transaction &&
+      isRecord(
+        nested.transaction,
+      )
+    ) {
+      return nested.transaction;
+    }
+  }
+
+  throw new Error(
+    "The server completed the request but did not return a valid transaction record.",
+  );
+}
+
+/**
+ * Extract a transaction array from the API envelope.
+ */
+function extractTransactionList(
+  value: unknown,
+): BackendTransaction[] {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value as BackendTransaction[];
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  if (
+    Array.isArray(
+      value.transactions,
+    )
+  ) {
+    return value.transactions as BackendTransaction[];
+  }
+
+  if (
+    Array.isArray(
+      value.items,
+    )
+  ) {
+    return value.items as BackendTransaction[];
+  }
+
+  if (
+    isRecord(value.data)
+  ) {
+    return extractTransactionList(
+      value.data,
+    );
+  }
+
+  return [];
+}
+
 export const transactionService = {
   async list(): Promise<
     DispenseTransaction[]
@@ -498,26 +758,11 @@ export const transactionService = {
           TransactionListResponse
       >("/transactions");
 
-    const data = response.data;
-
-    if (Array.isArray(data)) {
-      return data.map(
-        normaliseTransaction,
-      );
-    }
-
-    if (
-      data &&
-      Array.isArray(
-        data.transactions,
-      )
-    ) {
-      return data.transactions.map(
-        normaliseTransaction,
-      );
-    }
-
-    return [];
+    return extractTransactionList(
+      response.data,
+    ).map(
+      normaliseTransaction,
+    );
   },
 
   async get(
@@ -530,18 +775,16 @@ export const transactionService = {
     }
 
     const response =
-      await api.get<BackendTransaction>(
+      await api.get<unknown>(
         `/transactions/${encodeURIComponent(
           id,
         )}`,
       );
 
-    if (!response.data) {
-      throw new Error("Failed to fetch transaction: No data returned from server");
-    }
-
     return normaliseTransaction(
-      response.data,
+      extractTransaction(
+        response.data,
+      ),
     );
   },
 
@@ -556,15 +799,15 @@ export const transactionService = {
       );
     }
 
-    if (
-      !input.clinicianName.trim()
-    ) {
+    if (!input.clinicianId?.trim()) {
       throw new Error(
-        "Clinician name is required.",
+        "A registered prescribing clinician is required.",
       );
     }
 
-    if (!input.items.length) {
+    if (
+      !input.items.length
+    ) {
       throw new Error(
         "At least one medicine must be included.",
       );
@@ -601,17 +844,18 @@ export const transactionService = {
     }
 
     const response =
-      await api.post<BackendTransaction>(
+      await api.post<unknown>(
         "/transactions",
         input,
       );
 
-    if (!response.data) {
-      throw new Error("Failed to create transaction: No data returned from server");
-    }
+    const transaction =
+      extractTransaction(
+        response.data,
+      );
 
     return normaliseTransaction(
-      response.data,
+      transaction,
     );
   },
 
@@ -625,18 +869,19 @@ export const transactionService = {
     }
 
     const response =
-      await api.patch<BackendTransaction>(
+      await api.patch<unknown>(
         `/transactions/${encodeURIComponent(
           id,
         )}/cancel`,
       );
 
-    if (!response.data) {
-      throw new Error("Failed to cancel transaction: No data returned from server");
-    }
+    const transaction =
+      extractTransaction(
+        response.data,
+      );
 
     return normaliseTransaction(
-      response.data,
+      transaction,
     );
   },
 };

@@ -12,9 +12,7 @@ interface LogoutModalProps {
   userName?: string;
 }
 
-export const LogoutModal: React.FC<
-  LogoutModalProps
-> = ({
+export const LogoutModal: React.FC<LogoutModalProps> = ({
   isOpen,
   onClose,
   onConfirmLogout,
@@ -25,14 +23,17 @@ export const LogoutModal: React.FC<
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+      onClick={onClose}
+    >
       <div
         className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
         role="dialog"
         aria-modal="true"
         aria-labelledby="logout-dialog-title"
+        onClick={(event) => event.stopPropagation()}
       >
-        {/* Close button */}
         <button
           type="button"
           onClick={onClose}
@@ -43,7 +44,6 @@ export const LogoutModal: React.FC<
         </button>
 
         <div className="flex flex-col items-center space-y-4 text-center">
-          {/* Logout icon */}
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-[#22577A]/15 bg-[#22577A]/10 text-[#22577A]">
             <LogOut className="h-7 w-7 stroke-[2.2]" />
           </div>
@@ -66,7 +66,6 @@ export const LogoutModal: React.FC<
             </p>
           </div>
 
-          {/* Buttons */}
           <div className="grid w-full grid-cols-2 gap-3 pt-2">
             <button
               type="button"
@@ -80,8 +79,7 @@ export const LogoutModal: React.FC<
             <button
               type="button"
               onClick={() => {
-                onConfirmLogout();
-                onClose();
+                void onConfirmLogout();
               }}
               className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#22577A] px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#1b4662] sm:text-sm"
             >

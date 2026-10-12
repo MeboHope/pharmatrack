@@ -59,6 +59,11 @@ interface LogoutData {
   success?: boolean;
 }
 
+interface PasswordResetData {
+  success?: boolean;
+  message?: string;
+}
+
 interface BackendOrganization {
   id: string;
   name: string;
@@ -659,6 +664,95 @@ export const authService = {
       throw new Error(
         response.message ||
           "Unable to resend the verification code.",
+      );
+    }
+  },
+
+  /**
+   * Request a password-reset email.
+   *
+   * The backend intentionally returns a
+   * generic successful response whether or not
+   * the email belongs to an account. This prevents
+   * account-enumeration attacks.
+   */
+  async requestPasswordReset(
+    email: string,
+  ): Promise<void> {
+    const normalizedEmail =
+      email
+        .trim()
+        .toLowerCase();
+
+    if (!normalizedEmail) {
+      throw new Error(
+        "Please enter your email address.",
+      );
+    }
+
+    const response =
+      await apiRequest.post(
+        "/auth/forgot-password",
+        {
+          email:
+            normalizedEmail,
+        },
+      );
+
+    if (
+      response.success !== true
+    ) {
+      throw new Error(
+        response.message ||
+          "Unable to process the password reset request.",
+      );
+    }
+  },
+
+  /**
+   * Complete a password reset using the
+   * one-time token supplied in the reset link.
+   *
+   * This endpoint does not create a new browser
+   * authentication session. The user must sign
+   * in again using the new password.
+   */
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<void> {
+    const normalizedToken =
+      token.trim();
+
+    if (!normalizedToken) {
+      throw new Error(
+        "Invalid or expired password reset link.",
+      );
+    }
+
+    if (!newPassword) {
+      throw new Error(
+        "Please enter a new password.",
+      );
+    }
+
+    const response =
+      await apiRequest.post<PasswordResetData>(
+        "/auth/reset-password",
+        {
+          token:
+            normalizedToken,
+
+          newPassword,
+        },
+      );
+
+    if (
+      response.success !== true
+    ) {
+      throw new Error(
+        response.message ||
+          "Unable to reset your password. Please request a new reset link.",
       );
     }
   },

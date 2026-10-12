@@ -3315,36 +3315,21 @@ export function SuperAdminDashboard({
   const renderSystemStatus =
     () => {
       const serviceEntries = systemStatus
-        ? [
-            {
-              name: "API service",
-              description:
-                "Application programming interface",
-              icon: Activity,
-              service:
-                systemStatus
-                  .services.api,
-            },
-            {
-              name: "Database",
-              description:
-                "Persistent platform data",
-              icon: Database,
-              service:
-                systemStatus
-                  .services.database,
-            },
-            {
-              name: "Reports service",
-              description:
-                "Reporting and analytics availability",
-              icon: Activity,
-              service:
-                systemStatus
-                  .services.reports,
-            },
-          ]
-        : [];
+  ? [
+      {
+        name: "API service",
+        description: "Application programming interface",
+        icon: Activity,
+        service: systemStatus.services.api,
+      },
+      {
+        name: "Database",
+        description: "Persistent platform data",
+        icon: Database,
+        service: systemStatus.services.database,
+      },
+    ]
+  : [];
 
       return (
         <div className="space-y-6 p-4 sm:p-6 lg:p-8">

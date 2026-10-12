@@ -2,6 +2,28 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   "http://localhost:4000/api";
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const REFRESH_REQUEST_TIMEOUT_MS = 10000;
+
+const createTimeoutSignal = (
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): { signal: AbortSignal; cleanup: () => void } => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  const abortFromExternal = () => controller.abort();
+  externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", abortFromExternal);
+    },
+  };
+};
+
 export const ACCESS_TOKEN_KEY =
   "pharmatrack_access_token";
 
@@ -297,11 +319,16 @@ const refreshAccessToken =
 
     refreshPromise =
       (async () => {
-        const response =
-          await fetch(
+        const timeout = createTimeoutSignal(REFRESH_REQUEST_TIMEOUT_MS);
+
+        let response: Response;
+
+        try {
+          response = await fetch(
             `${API_BASE_URL}/auth/refresh`,
             {
               method: "POST",
+              signal: timeout.signal,
               headers: {
                 "Content-Type":
                   "application/json",
@@ -313,6 +340,17 @@ const refreshAccessToken =
               }),
             },
           );
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            throw new ApiError(
+              "Authentication refresh timed out. Please sign in again.",
+              408,
+            );
+          }
+          throw error;
+        } finally {
+          timeout.cleanup();
+        }
 
         let payload: unknown =
           null;
@@ -411,6 +449,7 @@ interface RequestOptions
   extends RequestInit {
   skipAuth?: boolean;
   skipRefresh?: boolean;
+  timeoutMs?: number;
 }
 
 const buildUrl = (
@@ -523,6 +562,7 @@ const requestRaw = async (
   const {
     skipAuth,
     skipRefresh,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     ...fetchOptions
   } = options;
 
@@ -565,19 +605,42 @@ const requestRaw = async (
     }
   }
 
-  const response =
-    await fetch(
+  const timeout = createTimeoutSignal(
+    timeoutMs,
+    fetchOptions.signal ?? undefined,
+  );
+
+  let response: Response;
+  let payload: unknown;
+
+  try {
+    response = await fetch(
       buildUrl(path),
       {
         ...fetchOptions,
+        signal: timeout.signal,
         headers,
       },
     );
 
-  const payload =
-    await parseResponseBody(
-      response,
+    payload = await parseResponseBody(response);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(
+        `Request timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`,
+        408,
+      );
+    }
+
+    throw new ApiError(
+      "Unable to reach the PharmaTrack server. Please check that the API is running and try again.",
+      0,
+      [],
+      error,
     );
+  } finally {
+    timeout.cleanup();
+  }
 
   /*
    * Automatically refresh an expired
@@ -640,13 +703,16 @@ const requestRaw = async (
  * into:
  *
  * [...]
+ *
+ * If the backend returns raw data instead
+ * of an envelope, return the raw data.
  */
 const unwrapData = <T>(
   payload: unknown,
 ): T => {
   if (
     isRecord(payload) &&
-    "success" in payload &&
+    payload.success === true &&
     "data" in payload
   ) {
     return payload.data as T;
@@ -658,6 +724,34 @@ const unwrapData = <T>(
 /*
  * Return the complete backend
  * response envelope.
+ *
+ * IMPORTANT:
+ *
+ * Some backend routes return a complete
+ * API envelope:
+ *
+ * {
+ *   success: true,
+ *   data: ...
+ * }
+ *
+ * Other production routes return their
+ * resource directly:
+ *
+ * {
+ *   id: "...",
+ *   transactionNo: "...",
+ *   ...
+ * }
+ *
+ * Only treat a response as an envelope
+ * when it actually contains both:
+ *
+ *   success === true
+ *   data
+ *
+ * Otherwise wrap the raw response as
+ * the data property.
  */
 const requestEnvelope =
   async <T>(
@@ -670,7 +764,10 @@ const requestEnvelope =
         options,
       );
 
-    if (isRecord(payload)) {
+    if (
+      isRecord(payload) &&
+      payload.success === true
+    ) {
       return payload as unknown as ApiEnvelope<T>;
     }
 
