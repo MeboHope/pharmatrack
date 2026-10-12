@@ -1,4 +1,7 @@
+﻿import { PharmaTrackLogo } from "./components/PharmaTrackLogo";
 import React, {
+  lazy,
+  Suspense,
   useEffect,
   useState,
 } from "react";
@@ -8,28 +11,104 @@ import {
   useRoutes,
 } from "react-router-dom";
 
-import { Sidebar } from "./components/Sidebar";
-import { Dashboard } from "./components/Dashboard";
-import { SuperAdminDashboard } from "./components/SuperAdminDashboard";
-import {
-  Inventory,
-  type InventoryProduct,
-  type ReceiveStockInput,
+import type {
+  InventoryProduct,
+  ReceiveStockInput,
 } from "./components/Inventory";
-import { AuthModal } from "./components/AuthModal";
-import { LandingScreen } from "./components/LandingScreen";
-import { LogoutModal } from "./components/LogoutModal";
-import { Dispensing } from "./components/Dispensing";
-import { Suppliers } from "./components/Suppliers";
-import { Patients } from "./components/Patients";
-import { Reports } from "./components/Reports";
-import { StockAdjustments } from "./components/StockAdjustments";
-import { Settings } from "./components/Settings";
-import { UserManagement } from "./components/UserManagement";
-import AuditLogs from "./components/AuditLogs";
-import FeatureDetails from "./components/FeatureDetails";
-import { PharmaTrackLogo } from "./components/PharmaTrackLogo";
-import ResetPassword  from "./components/ResetPassword.tsx";
+
+const Sidebar = lazy(() =>
+  import("./components/Sidebar").then((module) => ({
+    default: module.Sidebar,
+  })),
+);
+
+const Dashboard = lazy(() =>
+  import("./components/Dashboard").then((module) => ({
+    default: module.Dashboard,
+  })),
+);
+
+const SuperAdminDashboard = lazy(() =>
+  import("./components/SuperAdminDashboard").then((module) => ({
+    default: module.SuperAdminDashboard,
+  })),
+);
+
+const Inventory = lazy(() =>
+  import("./components/Inventory").then((module) => ({
+    default: module.Inventory,
+  })),
+);
+
+const AuthModal = lazy(() =>
+  import("./components/AuthModal").then((module) => ({
+    default: module.AuthModal,
+  })),
+);
+
+const LandingScreen = lazy(() =>
+  import("./components/LandingScreen").then((module) => ({
+    default: module.LandingScreen,
+  })),
+);
+
+const LogoutModal = lazy(() =>
+  import("./components/LogoutModal").then((module) => ({
+    default: module.LogoutModal,
+  })),
+);
+
+const Dispensing = lazy(() =>
+  import("./components/Dispensing").then((module) => ({
+    default: module.Dispensing,
+  })),
+);
+
+const Suppliers = lazy(() =>
+  import("./components/Suppliers").then((module) => ({
+    default: module.Suppliers,
+  })),
+);
+
+const Patients = lazy(() =>
+  import("./components/Patients").then((module) => ({
+    default: module.Patients,
+  })),
+);
+
+const Reports = lazy(() =>
+  import("./components/Reports").then((module) => ({
+    default: module.Reports,
+  })),
+);
+
+const StockAdjustments = lazy(() =>
+  import("./components/StockAdjustments").then((module) => ({
+    default: module.StockAdjustments,
+  })),
+);
+
+const Settings = lazy(() =>
+  import("./components/Settings").then((module) => ({
+    default: module.Settings,
+  })),
+);
+
+const UserManagement = lazy(() =>
+  import("./components/UserManagement").then((module) => ({
+    default: module.UserManagement,
+  })),
+);
+
+const AuditLogs = lazy(() => import("./components/AuditLogs"));
+
+const FeatureDetails = lazy(() =>
+  import("./components/FeatureDetails"),
+);
+
+const ResetPassword = lazy(() =>
+  import("./components/ResetPassword.tsx"),
+);
 
 import type {
   DispenseTransaction,
@@ -452,6 +531,24 @@ const unwrap = <T,>(
 ): T | undefined => {
   return response.data;
 };
+
+function PageLoadingFallback() {
+  return (
+    <div
+      className="flex min-h-[40vh] items-center justify-center bg-slate-100 px-4"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="text-center">
+        <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-[#22577A]" />
+
+        <p className="text-sm font-semibold text-slate-700">
+          Loading PharmaTrack...
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   /*
@@ -1739,60 +1836,49 @@ export default function App() {
     location.pathname.startsWith("/features/");
 
   if (isPublicRoute) {
-    return publicRoute;
-  }
+  return (
+    <Suspense fallback={<PageLoadingFallback />}>
+      {publicRoute}
+    </Suspense>
+  );
+}
 
   if (!currentUser) {
-    return (
+  return (
+    <Suspense fallback={<PageLoadingFallback />}>
       <>
         <LandingScreen
-          onLoginClick={
-            handleOpenLogin
-          }
-          onSignUpClick={
-            handleOpenSignup
-          }
+          onLoginClick={handleOpenLogin}
+          onSignUpClick={handleOpenSignup}
         />
 
         <AuthModal
-          isOpen={
-            isAuthModalOpen
-          }
-          onClose={() =>
-            setIsAuthModalOpen(
-              false,
-            )
-          }
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
           currentUser={null}
-          onLoginSuccess={
-            handleLoginSuccess
-          }
-          onSignUpSuccess={
-            handleSignUpSuccess
-          }
-          initialMode={
-            authModalInitialMode
-          }
+          onLoginSuccess={handleLoginSuccess}
+          onSignUpSuccess={handleSignUpSuccess}
+          initialMode={authModalInitialMode}
         />
       </>
-    );
-  }
+    </Suspense>
+  );
+}
 
   if (isSuperAdmin) {
-    return (
+  return (
+    <Suspense fallback={<PageLoadingFallback />}>
       <SuperAdminDashboard
-        currentUser={
-          currentUser
-        }
-        userName={
-          currentUser.name
-        }
+        currentUser={currentUser}
+        userName={currentUser.name}
         onLogout={logout}
       />
-    );
-  }
+    </Suspense>
+  );
+}
 
   return (
+  <Suspense fallback={<PageLoadingFallback />}>
     <div className="flex h-screen min-h-0 overflow-hidden bg-slate-100 font-sans antialiased text-slate-800">
       <Sidebar
         activeTab={activeTab}
@@ -2100,6 +2186,7 @@ export default function App() {
           authModalInitialMode
         }
       />
-    </div>
+        </div>
+  </Suspense>
   );
 }

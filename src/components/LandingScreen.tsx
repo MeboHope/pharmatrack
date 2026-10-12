@@ -44,7 +44,7 @@ interface RevealProps {
   scale?: boolean;
 }
 
-const Reveal: React.FC<RevealProps> = ({
+export const Reveal: React.FC<RevealProps> = ({
   children,
   className = "",
   delay = 0,
