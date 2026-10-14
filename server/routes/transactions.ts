@@ -19,6 +19,10 @@ import {
   requireRole,
 } from "../middleware/auth.js";
 import { recordAudit } from "../middleware/audit.js";
+import {
+  assertMonthlyTransactionLimit,
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
 
 const router = Router();
 
@@ -995,6 +999,14 @@ router.post(
                 const now =
                   new Date();
 
+                // Enforce the organization's subscription and monthly
+                // dispensing transaction limit before creating the sale.
+                await assertMonthlyTransactionLimit(
+                  tx,
+                  organizationId,
+                  now,
+                );
+
                 const transactionNo =
                   generateTransactionNumber();
 
@@ -1577,6 +1589,13 @@ router.post(
         error instanceof Error
           ? error.message
           : "Failed to create transaction.";
+
+                if (error instanceof SubscriptionLimitError) {
+        return response.status(error.statusCode).json({
+          message: error.message,
+          code: error.code,
+        });
+      }
 
       if (
         message

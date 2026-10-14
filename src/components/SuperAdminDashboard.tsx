@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 
 import { SuperAdminLayout } from "./SuperAdminLayout";
+import SuperAdminBillingPlans from "./SuperAdminBillingPlans";
+import SuperAdminSubscriptions from "./SuperAdminSubscriptions";
 
 import type {
   SuperAdminSection,
@@ -323,6 +325,8 @@ export function SuperAdminDashboard({
         "users",
         "audit-logs",
         "system-status",
+        "billing-plans",
+        "organization-subscriptions",
         "settings",
       ];
 
@@ -4044,6 +4048,12 @@ export function SuperAdminDashboard({
 
       case "system-status":
         return renderSystemStatus();
+
+      case "billing-plans":
+        return <SuperAdminBillingPlans />;
+
+      case "organization-subscriptions":
+        return <SuperAdminSubscriptions />;
 
       case "settings":
         return renderSettings();

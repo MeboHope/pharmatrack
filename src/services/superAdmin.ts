@@ -13,6 +13,96 @@ export type OrganizationRole =
   | "PHARMACIST"
   | "CLINICIAN";
 
+  /* ============================================================
+   SUBSCRIPTION PLAN TYPES
+   ============================================================ */
+
+export interface SubscriptionPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  monthlyPrice: number | string;
+  annualPrice: number | string;
+  currency: string;
+  maxUsers: number | null;
+  maxProducts: number | null;
+  maxLocations: number | null;
+  maxMonthlyTransactions: number | null;
+  features: unknown;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  _count?: {
+    subscriptions: number;
+  };
+}
+
+export interface SubscriptionPlanInput {
+  code: string;
+  name: string;
+  description?: string | null;
+  monthlyPrice: number;
+  annualPrice: number;
+  currency?: string;
+  maxUsers?: number | null;
+  maxProducts?: number | null;
+  maxLocations?: number | null;
+  maxMonthlyTransactions?: number | null;
+  features?: unknown;
+  sortOrder?: number;
+}
+
+/* ============================================================
+   SUBSCRIPTION TYPES
+   ============================================================ */
+
+export type BillingInterval = "MONTHLY" | "ANNUAL";
+
+export type SubscriptionStatus =
+  | "PENDING"
+  | "TRIALING"
+  | "ACTIVE"
+  | "PAST_DUE"
+  | "CANCELED"
+  | "EXPIRED";
+
+export interface OrganizationSubscription {
+  id: string;
+  organizationId: string;
+  planId: string;
+  billingInterval: BillingInterval;
+  status: SubscriptionStatus;
+  amount: number | string;
+  currency: string;
+  startedAt: string | null;
+  trialStartsAt: string | null;
+  trialEndsAt: string | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  organization: { id: string; name: string };
+  plan: {
+    id: string;
+    code: string;
+    name: string;
+    monthlyPrice: number | string;
+    annualPrice: number | string;
+    currency: string;
+  };
+}
+
+export interface AssignOrganizationSubscriptionInput {
+  planId: string;
+  billingInterval: BillingInterval;
+  status: "PENDING" | "ACTIVE" | "TRIALING";
+  trialDays?: number;
+}
 /* ============================================================
    ORGANIZATION TYPES
    ============================================================ */
@@ -1182,6 +1272,149 @@ export const superAdminService = {
     return normalizeAuditLog(
       log,
     );
+  },
+
+    /* ==========================================================
+     SUBSCRIPTION PLAN MANAGEMENT
+     ========================================================== */
+
+  async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+    const response = await api.get<SubscriptionPlan[]>(
+      "/super-admin/billing/plans",
+    ) as unknown as {
+      data?: SubscriptionPlan[];
+      plans?: SubscriptionPlan[];
+    };
+
+    return response.data ?? response.plans ?? [];
+  },
+
+  async createSubscriptionPlan(
+    input: SubscriptionPlanInput,
+  ): Promise<SubscriptionPlan> {
+    const response = await api.post<SubscriptionPlan>(
+      "/super-admin/billing/plans",
+      input,
+    ) as unknown as {
+      data?: SubscriptionPlan;
+      plan?: SubscriptionPlan;
+    };
+
+    const plan = response.data ?? response.plan;
+
+    if (!plan) {
+      throw new Error(
+        "The server did not return the created subscription plan.",
+      );
+    }
+
+    return plan;
+  },
+
+  async updateSubscriptionPlan(
+    planId: string,
+    input: Partial<SubscriptionPlanInput>,
+  ): Promise<SubscriptionPlan> {
+    const response = await api.put<SubscriptionPlan>(
+      `/super-admin/billing/plans/${encodeURIComponent(planId)}`,
+      input,
+    ) as unknown as {
+      data?: SubscriptionPlan;
+      plan?: SubscriptionPlan;
+    };
+
+    const plan = response.data ?? response.plan;
+
+    if (!plan) {
+      throw new Error(
+        "The server did not return the updated subscription plan.",
+      );
+    }
+
+    return plan;
+  },
+
+  async setSubscriptionPlanStatus(
+    planId: string,
+    isActive: boolean,
+  ): Promise<SubscriptionPlan> {
+    const response = await api.patch<SubscriptionPlan>(
+      `/super-admin/billing/plans/${encodeURIComponent(planId)}/status`,
+      { isActive },
+    ) as unknown as {
+      data?: SubscriptionPlan;
+      plan?: SubscriptionPlan;
+    };
+
+    const plan = response.data ?? response.plan;
+
+    if (!plan) {
+      throw new Error(
+        "The server did not return the updated subscription plan status.",
+      );
+    }
+
+    return plan;
+  },
+
+  /* ==========================================================
+     ORGANIZATION SUBSCRIPTION MANAGEMENT
+     ========================================================== */
+
+  async getOrganizationSubscriptions(): Promise<OrganizationSubscription[]> {
+    const response =
+      await api.get<OrganizationSubscription[]>(
+        "/super-admin/billing/subscriptions",
+      ) as unknown as {
+        data?: OrganizationSubscription[];
+        subscriptions?: OrganizationSubscription[];
+      };
+
+    return response.data ?? response.subscriptions ?? [];
+  },
+
+  async assignOrganizationSubscription(
+    organizationId: string,
+    input: AssignOrganizationSubscriptionInput,
+  ): Promise<OrganizationSubscription> {
+    const response =
+      await api.post<OrganizationSubscription>(
+        `/super-admin/billing/organizations/${encodeURIComponent(organizationId)}/subscription`,
+        input,
+      ) as unknown as {
+        data?: OrganizationSubscription;
+        subscription?: OrganizationSubscription;
+      };
+
+    const subscription = response.data ?? response.subscription;
+
+    if (!subscription) {
+      throw new Error("The server did not return the assigned subscription.");
+    }
+
+    return subscription;
+  },
+
+  async updateOrganizationSubscriptionStatus(
+    subscriptionId: string,
+    status: SubscriptionStatus,
+  ): Promise<OrganizationSubscription> {
+    const response =
+      await api.patch<OrganizationSubscription>(
+        `/super-admin/billing/subscriptions/${encodeURIComponent(subscriptionId)}/status`,
+        { status },
+      ) as unknown as {
+        data?: OrganizationSubscription;
+        subscription?: OrganizationSubscription;
+      };
+
+    const subscription = response.data ?? response.subscription;
+
+    if (!subscription) {
+      throw new Error("The server did not return the updated subscription.");
+    }
+
+    return subscription;
   },
 
   /* ==========================================================

@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  CreditCard,
   LayoutDashboard,
   LogOut,
   Settings,
@@ -20,7 +21,9 @@ export type SuperAdminSection =
   | "users"
   | "audit-logs"
   | "system-status"
-  | "settings";
+  | "settings"
+  | "billing-plans"
+  | "organization-subscriptions";
 
 interface SuperAdminSidebarProps {
   activeSection: SuperAdminSection;
@@ -77,6 +80,18 @@ const managementNavigation: NavigationItem[] = [
     label: "System Status",
     description: "Platform health",
     icon: Activity,
+  },
+  {
+    id: "billing-plans",
+    label: "Subscription Plans",
+    description: "Manage SaaS pricing and limits",
+    icon: CreditCard,
+  },
+  {
+    id: "organization-subscriptions",
+    label: "Organization Subscriptions",
+    description: "Assign and manage organization plans",
+    icon: Building2,
   },
   {
     id: "settings",

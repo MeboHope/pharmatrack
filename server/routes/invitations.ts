@@ -29,6 +29,9 @@ import {
   validateInvitation,
 } from "../services/invitations.js";
 import type { InvitationRole } from "../services/invitationEmail.js";
+import {
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
 
 const router = Router();
 
@@ -252,11 +255,19 @@ router.post(
         organizationId:
           result.organizationId,
       });
-    } catch (error) {
+        } catch (error) {
       console.error(
         "Invitation acceptance error:",
         error,
       );
+
+      if (error instanceof SubscriptionLimitError) {
+        res.status(error.statusCode).json({
+          message: error.message,
+          code: error.code,
+        });
+        return;
+      }
 
       const message =
         error instanceof Error
@@ -426,11 +437,19 @@ router.post(
           "Invitation created and sent successfully.",
         invitation: result.invitation,
       });
-    } catch (error) {
+        } catch (error) {
       console.error(
         "Create invitation error:",
         error,
       );
+
+      if (error instanceof SubscriptionLimitError) {
+        res.status(error.statusCode).json({
+          message: error.message,
+          code: error.code,
+        });
+        return;
+      }
 
       const message =
         error instanceof Error

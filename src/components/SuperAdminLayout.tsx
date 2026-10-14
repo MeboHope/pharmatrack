@@ -58,6 +58,18 @@ const sectionMeta: Record<
       "Monitor platform services and operational health.",
   },
 
+  "billing-plans": {
+    title: "Subscription Plans",
+    description:
+      "Configure SaaS subscription pricing, features, and usage limits.",
+  },
+
+  "organization-subscriptions": {
+    title: "Organization Subscriptions",
+    description:
+      "Assign subscription plans and manage organization billing status.",
+  },
+
   settings: {
     title: "Platform Settings",
     description:

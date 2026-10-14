@@ -14,6 +14,9 @@ import {
   sendInvitationEmail,
   type InvitationRole,
 } from "./invitationEmail.js";
+import {
+  assertUserLimit,
+} from "./subscriptionLimits.js";
 
 const INVITATION_EXPIRY_HOURS = 72;
 
@@ -172,6 +175,12 @@ export async function createInvitation(
       "There is already a pending invitation for this email address.",
     );
   }
+
+    // Enforce the organization's subscription and user limit.
+  await assertUserLimit(
+    prisma,
+    input.organizationId,
+  );
 
   const token = generateInvitationToken();
   const tokenHash = hashInvitationToken(token);
@@ -336,6 +345,16 @@ export async function acceptInvitation(input: {
       "Password must be 12–128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
+
+    // Check capacity before adding this invited user.
+  // Exclude this invitation because it is the invitation being accepted.
+  await assertUserLimit(
+    prisma,
+    invitation.organizationId,
+    {
+      excludeInvitationId: invitation.id,
+    },
+  );
 
   const existingUser = await prisma.user.findUnique({
     where: {

@@ -8,6 +8,10 @@ import {
   requireRole,
 } from "../middleware/auth.js";
 import { recordAudit } from "../middleware/audit.js";
+import {
+  assertProductLimit,
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
 
 const router = Router();
 
@@ -456,6 +460,25 @@ router.post(
             "A product with this code already exists in this organization.",
         });
         return;
+      }
+
+            // Enforce the organization's SaaS subscription and product limit.
+      try {
+        await assertProductLimit(
+          prisma,
+          organizationId,
+        );
+      } catch (error) {
+        if (error instanceof SubscriptionLimitError) {
+          response.status(error.statusCode).json({
+            success: false,
+            message: error.message,
+            code: error.code,
+          });
+          return;
+        }
+
+        throw error;
       }
 
       const product =

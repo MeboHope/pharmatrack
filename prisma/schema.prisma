@@ -29,6 +29,7 @@ model Organization {
   stockAdjustments StockAdjustment[]
   settings         PharmacySettings?
   auditLogs        AuditLog[]
+  subscriptions    OrganizationSubscription[]
 
   @@index([type])
   @@index([status])
@@ -359,37 +360,20 @@ model StockAdjustment {
   date DateTime @default(now())
 
   /**
-   * Legacy fields.
-   * These remain nullable so historical StockAdjustment
-   * records created by the original Drug-based system
-   * remain valid during the migration to batch inventory.
+   * Legacy fields retained for historical Drug-based adjustments.
    */
   drugId   String?
   drugName String?
   batchNo  String?
 
   /**
-   * New batch-based inventory architecture.
+   * Batch-based inventory fields.
    */
   productId String?
   batchId   String?
 
-  /**
-   * Quantity before the adjustment.
-   */
-  previousQty Int
-
-  /**
-   * Quantity after the adjustment.
-   */
-  adjustedQty Int
-
-  /**
-   * Signed quantity change.
-   * Example:
-   * -20 = remove 20 units
-   * +50 = add 50 units
-   */
+  previousQty   Int
+  adjustedQty   Int
   quantityDelta Int?
 
   type   AdjustmentType
@@ -401,9 +385,6 @@ model StockAdjustment {
   userId         String?
   organizationId String
 
-  /**
-   * Optional external/reference information.
-   */
   referenceType String?
   referenceId   String?
 
@@ -451,20 +432,9 @@ model User {
 
   AuditLog AuditLog[]
 
-  /**
-   * Transactions processed/dispensed by this user.
-   */
   dispensedTransactions DispenseTransaction[] @relation("TransactionDispenser")
-
-  /**
-   * Transactions for which this user was the registered clinician.
-   */
   clinicianTransactions DispenseTransaction[] @relation("TransactionClinician")
-
-  /**
-   * Prescription items where this user recorded the dispenser.
-   */
-  prescriptionItems PrescriptionItem[] @relation("PrescriptionItemDispenser")
+  prescriptionItems     PrescriptionItem[]    @relation("PrescriptionItemDispenser")
 
   StockAdjustment    StockAdjustment[]
   StockMovement      StockMovement[]
@@ -524,6 +494,135 @@ model PasswordResetToken {
   @@index([userId])
   @@index([expiresAt])
   @@index([usedAt])
+}
+
+/**
+ * ============================================================
+ * SAAS SUBSCRIPTION BILLING
+ * ============================================================
+ */
+
+model SubscriptionPlan {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  description String?
+
+  monthlyPrice Decimal @db.Decimal(12, 2)
+  annualPrice  Decimal @db.Decimal(12, 2)
+  currency     String  @default("KES")
+
+  maxUsers               Int?
+  maxProducts            Int?
+  maxLocations           Int?
+  maxMonthlyTransactions Int?
+
+  features Json?
+
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions OrganizationSubscription[]
+
+  @@index([isActive, sortOrder])
+}
+
+model OrganizationSubscription {
+  id             String @id @default(cuid())
+  organizationId String
+  planId         String
+
+  status          SubscriptionStatus @default(PENDING)
+  billingInterval BillingInterval
+
+  // Snapshot of the price accepted when this subscription was created.
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  startedAt          DateTime?
+  trialStartsAt      DateTime?
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  cancelAtPeriodEnd Boolean   @default(false)
+  canceledAt        DateTime?
+  endedAt           DateTime?
+
+  paymentProvider        String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plan         SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments     BillingPayment[]
+
+  @@index([organizationId, status])
+  @@index([planId])
+  @@index([currentPeriodEnd])
+  @@index([providerSubscriptionId])
+}
+
+model BillingPayment {
+  id             String @id @default(cuid())
+  subscriptionId String
+
+  provider String
+  method   BillingPaymentMethod
+  status   BillingPaymentStatus @default(PENDING)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  // Generated and enforced by our server for checkout idempotency.
+  idempotencyKey String @unique
+
+  providerReference  String?
+  providerCheckoutId String?
+  receiptNumber      String?
+
+  failureCode    String?
+  failureMessage String?
+
+  // Only sanitized metadata. Never store card numbers or CVV.
+  metadata Json?
+
+  initiatedAt DateTime  @default(now())
+  paidAt      DateTime?
+  failedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  subscription OrganizationSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@index([subscriptionId, status])
+  @@index([provider, providerReference])
+  @@index([providerCheckoutId])
+  @@index([createdAt])
+  @@index([paidAt])
+}
+
+model BillingWebhookEvent {
+  id        String  @id @default(cuid())
+  provider  String
+  eventId   String
+  eventType String?
+
+  // Store only sanitized, non-sensitive provider event data.
+  payload Json?
+
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+  processingError String?
+
+  @@unique([provider, eventId])
+  @@index([processedAt])
+  @@index([receivedAt])
 }
 
 enum OrganizationType {
@@ -628,4 +727,32 @@ enum UserRole {
   ADMIN
   PHARMACIST
   CLINICIAN
+}
+
+enum SubscriptionStatus {
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum BillingPaymentMethod {
+  MPESA
+  CARD
+}
+
+enum BillingPaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELED
+  REFUNDED
 }
