@@ -10,6 +10,7 @@ import {
 import { recordAudit } from "../middleware/audit.js";
 import {
   assertProductLimit,
+  lockOrganizationSubscriptionResources,
   SubscriptionLimitError,
 } from "../services/subscriptionLimits.js";
 
@@ -440,20 +441,64 @@ router.post(
         return;
       }
 
-      const existing =
-        await prisma.product.findUnique({
-          where: {
-            organizationId_code: {
-              organizationId,
-              code,
-            },
-          },
-          select: {
-            id: true,
-          },
-        });
+            // Serialize product creation for this organization so concurrent
+      // requests cannot exceed the subscription product limit.
+      const result = await prisma.$transaction(
+        async (tx) => {
+          await lockOrganizationSubscriptionResources(
+            tx,
+            organizationId,
+          );
 
-      if (existing) {
+          // Recheck the product code inside the transaction.
+          const existing =
+            await tx.product.findUnique({
+              where: {
+                organizationId_code: {
+                  organizationId,
+                  code,
+                },
+              },
+              select: {
+                id: true,
+              },
+            });
+
+          if (existing) {
+            return {
+              duplicate: true as const,
+            };
+          }
+
+          // Check the subscription limit while holding the organization lock.
+          await assertProductLimit(
+            tx,
+            organizationId,
+          );
+
+          const product =
+            await tx.product.create({
+              data: {
+                organizationId,
+                code,
+                name,
+                genericName,
+                category,
+                formulation,
+                unit,
+                notes: notes ?? null,
+                status: "ACTIVE",
+              },
+            });
+
+          return {
+            duplicate: false as const,
+            product,
+          };
+        },
+      );
+
+      if (result.duplicate) {
         response.status(409).json({
           success: false,
           message:
@@ -462,40 +507,7 @@ router.post(
         return;
       }
 
-            // Enforce the organization's SaaS subscription and product limit.
-      try {
-        await assertProductLimit(
-          prisma,
-          organizationId,
-        );
-      } catch (error) {
-        if (error instanceof SubscriptionLimitError) {
-          response.status(error.statusCode).json({
-            success: false,
-            message: error.message,
-            code: error.code,
-          });
-          return;
-        }
-
-        throw error;
-      }
-
-      const product =
-        await prisma.product.create({
-          data: {
-            organizationId,
-            code,
-            name,
-            genericName,
-            category,
-            formulation,
-            unit,
-            notes:
-              notes ?? null,
-            status: "ACTIVE",
-          },
-        });
+      const product = result.product;
 
       await recordAudit(
         request,
@@ -880,6 +892,14 @@ router.delete(
         data: updated,
       });
     } catch (error) {
+            if (error instanceof SubscriptionLimitError) {
+        response.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+          code: error.code,
+        });
+        return;
+      }
       if (
         error instanceof
         Prisma.PrismaClientKnownRequestError

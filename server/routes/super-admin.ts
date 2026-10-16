@@ -16,6 +16,12 @@ import {
   type InvitationRole,
 } from "../services/invitationEmail.js";
 
+import {
+  assertUserLimit,
+  lockOrganizationSubscriptionResources,
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
+
 const router = express.Router();
 
 /* ============================================================
@@ -1213,115 +1219,14 @@ router.post(
         return;
       }
 
-      const organization =
-        await prisma.organization.findUnique({
-          where: {
-            id: request.params.id,
-          },
-        });
-
-      if (!organization) {
-        response.status(404).json({
-          success: false,
-          message:
-            "Organization not found",
-        });
-
-        return;
-      }
-
-      if (organization.status === "SUSPENDED") {
-        response.status(400).json({
-          success: false,
-          message:
-            "Cannot invite users to a suspended organization",
-        });
-
-        return;
-      }
-
       const normalizedEmail =
         normalizeEmail(email);
 
-      const existingUser =
-        await prisma.user.findUnique({
-          where: {
-            email: normalizedEmail,
-          },
-
-          select: {
-            id: true,
-            role: true,
-          },
-        });
-
-      if (
-        existingUser &&
-        existingUser.role === "SUPER_ADMIN"
-      ) {
-        response.status(400).json({
-          success: false,
-          message:
-            "A Super Admin cannot be invited as an organization user",
-        });
-
-        return;
-      }
-
-      if (existingUser) {
-        const existingMembership =
-          await prisma.organizationMembership.findUnique(
-            {
-              where: {
-                organizationId_userId: {
-                  organizationId:
-                    organization.id,
-                  userId: existingUser.id,
-                },
-              },
-            },
-          );
-
-        if (existingMembership) {
-          response.status(409).json({
-            success: false,
-            message:
-              "This user is already a member of the organization",
-          });
-
-          return;
-        }
-      }
-
-      const activeInvitation =
-        await prisma.organizationInvitation.findFirst(
-          {
-            where: {
-              organizationId:
-                organization.id,
-
-              email: normalizedEmail,
-
-              acceptedAt: null,
-              revokedAt: null,
-
-              expiresAt: {
-                gt: new Date(),
-              },
-            },
-          },
-        );
-
-      if (activeInvitation) {
-        response.status(409).json({
-          success: false,
-          message:
-            "An active invitation already exists for this email address",
-        });
-
-        return;
-      }
-
+      /*
+       * Generate the token before entering the transaction.
+       * The token is only sent by email; the database stores
+       * its hash.
+       */
       const invitationToken =
         generateInvitationToken();
 
@@ -1334,43 +1239,232 @@ router.post(
         getInvitationExpiry();
 
       /*
-       * Explicitly generate the invitation ID.
+       * The organization lock, duplicate checks, quota check,
+       * and invitation creation must happen in one transaction.
        *
-       * The currently generated Prisma Client requires
-       * OrganizationInvitation.id during create(), even
-       * though the Prisma schema may define a default.
+       * This prevents concurrent invitation requests from
+       * bypassing the organization's user subscription limit.
        */
-      const invitation =
-        await prisma.organizationInvitation.create(
-          {
-            data: {
-              id: crypto.randomUUID(),
+      const result = await prisma.$transaction(
+        async (tx) => {
+          await lockOrganizationSubscriptionResources(
+            tx,
+            request.params.id,
+          );
 
-              organizationId:
-                organization.id,
+          const organization =
+            await tx.organization.findUnique({
+              where: {
+                id: request.params.id,
+              },
+            });
 
-              invitedById:
-                request.auth?.sub as string,
+          if (!organization) {
+            return {
+              kind: "organization-not-found" as const,
+            };
+          }
 
-              name: name.trim(),
+          if (
+            organization.status === "SUSPENDED"
+          ) {
+            return {
+              kind: "organization-suspended" as const,
+            };
+          }
 
-              email: normalizedEmail,
+          const existingUser =
+            await tx.user.findUnique({
+              where: {
+                email: normalizedEmail,
+              },
 
-              phone:
-                typeof phone === "string" &&
-                phone.trim()
-                  ? phone.trim()
-                  : null,
+              select: {
+                id: true,
+                role: true,
+              },
+            });
 
-              role,
+          if (
+            existingUser?.role === "SUPER_ADMIN"
+          ) {
+            return {
+              kind: "super-admin" as const,
+            };
+          }
 
-              tokenHash,
+          if (existingUser) {
+            const existingMembership =
+              await tx.organizationMembership.findUnique(
+                {
+                  where: {
+                    organizationId_userId: {
+                      organizationId:
+                        organization.id,
+                      userId: existingUser.id,
+                    },
+                  },
 
-              expiresAt,
-            },
-          },
-        );
+                  select: {
+                    id: true,
+                  },
+                },
+              );
 
+            if (existingMembership) {
+              return {
+                kind: "already-member" as const,
+              };
+            }
+          }
+
+          const activeInvitation =
+            await tx.organizationInvitation.findFirst(
+              {
+                where: {
+                  organizationId:
+                    organization.id,
+
+                  email: normalizedEmail,
+
+                  acceptedAt: null,
+                  revokedAt: null,
+
+                  expiresAt: {
+                    gt: new Date(),
+                  },
+                },
+
+                select: {
+                  id: true,
+                },
+              },
+            );
+
+          if (activeInvitation) {
+            return {
+              kind: "invitation-exists" as const,
+            };
+          }
+
+          /*
+           * Count current members and active pending invitations
+           * against the subscription's user limit.
+           *
+           * The organization lock is acquired before this check.
+           */
+          await assertUserLimit(
+            tx,
+            organization.id,
+          );
+
+          /*
+           * Explicitly generate the invitation ID.
+           *
+           * The currently generated Prisma Client requires
+           * OrganizationInvitation.id during create().
+           */
+          const invitation =
+            await tx.organizationInvitation.create({
+              data: {
+                id: crypto.randomUUID(),
+
+                organizationId:
+                  organization.id,
+
+                invitedById:
+                  request.auth?.sub as string,
+
+                name: name.trim(),
+
+                email: normalizedEmail,
+
+                phone:
+                  typeof phone === "string" &&
+                  phone.trim()
+                    ? phone.trim()
+                    : null,
+
+                role,
+
+                tokenHash,
+
+                expiresAt,
+              },
+            });
+
+          return {
+            kind: "created" as const,
+            organization,
+            invitation,
+          };
+        },
+      );
+
+      if (
+        result.kind === "organization-not-found"
+      ) {
+        response.status(404).json({
+          success: false,
+          message:
+            "Organization not found",
+        });
+
+        return;
+      }
+
+      if (
+        result.kind === "organization-suspended"
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Cannot invite users to a suspended organization",
+        });
+
+        return;
+      }
+
+      if (result.kind === "super-admin") {
+        response.status(400).json({
+          success: false,
+          message:
+            "A Super Admin cannot be invited as an organization user",
+        });
+
+        return;
+      }
+
+      if (result.kind === "already-member") {
+        response.status(409).json({
+          success: false,
+          message:
+            "This user is already a member of the organization",
+        });
+
+        return;
+      }
+
+      if (result.kind === "invitation-exists") {
+        response.status(409).json({
+          success: false,
+          message:
+            "An active invitation already exists for this email address",
+        });
+
+        return;
+      }
+
+      const {
+        organization,
+        invitation,
+      } = result;
+
+      /*
+       * Email delivery happens after the database transaction.
+       * If delivery fails, remove the pending invitation so the
+       * user is not charged against the limit indefinitely.
+       */
       try {
         await sendInvitationEmail({
           to: normalizedEmail,
@@ -1393,13 +1487,11 @@ router.post(
           emailError,
         );
 
-        await prisma.organizationInvitation.delete(
-          {
-            where: {
-              id: invitation.id,
-            },
+        await prisma.organizationInvitation.delete({
+          where: {
+            id: invitation.id,
           },
-        );
+        });
 
         response.status(502).json({
           success: false,
@@ -1457,6 +1549,18 @@ router.post(
         "Failed to create organization invitation:",
         error,
       );
+
+      if (
+        error instanceof SubscriptionLimitError
+      ) {
+        response.status(error.statusCode).json({
+          success: false,
+          code: error.code,
+          message: error.message,
+        });
+
+        return;
+      }
 
       response.status(500).json({
         success: false,
@@ -1612,6 +1716,10 @@ router.post(
         return;
       }
 
+      /*
+       * Verify that the organization and selected user exist
+       * before starting the membership-creation transaction.
+       */
       const organization =
         await prisma.organization.findUnique({
           where: {
@@ -1665,20 +1773,184 @@ router.post(
         return;
       }
 
-      const existingMembership =
-        await prisma.organizationMembership.findUnique(
-          {
-            where: {
-              organizationId_userId: {
-                organizationId:
-                  request.params.id,
-                userId: user.id,
-              },
-            },
-          },
-        );
+      /*
+       * Acquire the same organization lock used by invitations
+       * and other subscription-limited resource creation.
+       *
+       * Recheck membership and the user's system role inside
+       * the transaction, then check the quota before creating
+       * the membership.
+       */
+      const result = await prisma.$transaction(
+        async (tx) => {
+          await lockOrganizationSubscriptionResources(
+            tx,
+            organization.id,
+          );
 
-      if (existingMembership) {
+          const currentOrganization =
+            await tx.organization.findUnique({
+              where: {
+                id: organization.id,
+              },
+
+              select: {
+                id: true,
+                status: true,
+              },
+            });
+
+          if (!currentOrganization) {
+            return {
+              kind: "organization-not-found" as const,
+            };
+          }
+
+          if (
+            currentOrganization.status ===
+            "SUSPENDED"
+          ) {
+            return {
+              kind: "organization-suspended" as const,
+            };
+          }
+
+          const currentUser =
+            await tx.user.findUnique({
+              where: {
+                id: user.id,
+              },
+
+              select: {
+                id: true,
+                role: true,
+              },
+            });
+
+          if (!currentUser) {
+            return {
+              kind: "user-not-found" as const,
+            };
+          }
+
+          if (
+            currentUser.role === "SUPER_ADMIN"
+          ) {
+            return {
+              kind: "super-admin" as const,
+            };
+          }
+
+          const existingMembership =
+            await tx.organizationMembership.findUnique(
+              {
+                where: {
+                  organizationId_userId: {
+                    organizationId:
+                      currentOrganization.id,
+
+                    userId: currentUser.id,
+                  },
+                },
+
+                select: {
+                  id: true,
+                },
+              },
+            );
+
+          if (existingMembership) {
+            return {
+              kind: "already-member" as const,
+            };
+          }
+
+          /*
+           * Enforce the organization's subscription user limit
+           * before inserting the new membership.
+           */
+          await assertUserLimit(
+            tx,
+            currentOrganization.id,
+          );
+
+          const membership =
+            await tx.organizationMembership.create({
+              data: {
+                organizationId:
+                  currentOrganization.id,
+
+                userId: currentUser.id,
+
+                role,
+              },
+
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    phone: true,
+                    role: true,
+                    isVerified: true,
+                  },
+                },
+              },
+            });
+
+          return {
+            kind: "created" as const,
+            membership,
+          };
+        },
+      );
+
+      if (
+        result.kind === "organization-not-found"
+      ) {
+        response.status(404).json({
+          success: false,
+          message:
+            "Organization not found",
+        });
+
+        return;
+      }
+
+      if (
+        result.kind === "organization-suspended"
+      ) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Cannot add users to a suspended organization",
+        });
+
+        return;
+      }
+
+      if (result.kind === "user-not-found") {
+        response.status(404).json({
+          success: false,
+          message:
+            "The selected user could not be found.",
+        });
+
+        return;
+      }
+
+      if (result.kind === "super-admin") {
+        response.status(400).json({
+          success: false,
+          message:
+            "A Super Admin cannot be added as an organization member",
+        });
+
+        return;
+      }
+
+      if (result.kind === "already-member") {
         response.status(409).json({
           success: false,
           message:
@@ -1688,32 +1960,7 @@ router.post(
         return;
       }
 
-      const membership =
-        await prisma.organizationMembership.create(
-          {
-            data: {
-              organizationId:
-                request.params.id,
-
-              userId: user.id,
-
-              role,
-            },
-
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-                  role: true,
-                  isVerified: true,
-                },
-              },
-            },
-          },
-        );
+      const { membership } = result;
 
       await auditService.log({
         action:
@@ -1752,6 +1999,18 @@ router.post(
         "Failed to add organization member:",
         error,
       );
+
+      if (
+        error instanceof SubscriptionLimitError
+      ) {
+        response.status(error.statusCode).json({
+          success: false,
+          code: error.code,
+          message: error.message,
+        });
+
+        return;
+      }
 
       response.status(500).json({
         success: false,

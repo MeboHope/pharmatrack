@@ -8,7 +8,9 @@ export type TabType =
   | "stock-adjustments"
   | "user-management"
   | "audit-logs"
-  | "settings";
+  | "settings"
+  | "subscription-billing";
+
 
 export type DrugCategory =
   | "Antidiabetics"

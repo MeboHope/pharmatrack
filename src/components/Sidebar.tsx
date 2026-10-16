@@ -15,6 +15,7 @@
   UserRound,
   Users,
   X,
+  CreditCard,
 } from "lucide-react";
 import {
   useEffect,
@@ -225,6 +226,12 @@ export function Sidebar({
       label: "Audit Logs",
       icon: ScrollText,
       adminOnly: true,
+    },
+        {
+      id: "subscription-billing",
+      label: "Subscription & Billing",
+      icon: CreditCard,
+      roles: ["Admin"],
     },
     {
       id: "settings",

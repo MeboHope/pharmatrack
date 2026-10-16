@@ -27,6 +27,9 @@ import {
 } from "../services/passwordReset.js";
 
 import { sendPasswordResetEmail } from "../services/email.js";
+import {
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
 
 const router = Router();
 
@@ -63,125 +66,15 @@ const isAuthenticationFailure = (
 router.post(
   "/register",
   registrationRateLimiter,
-  async (
-    req,
-    res,
-    next,
-  ) => {
-    try {
-      const {
-        name,
-        email,
-        phone,
-        password,
-        role,
-      } = req.body ?? {};
-
-      if (!isNonEmptyString(name)) {
-        res.status(400).json({
-          success: false,
-          message:
-            "Full name is required.",
-        });
-        return;
-      }
-
-      if (!isValidEmail(email)) {
-        res.status(400).json({
-          success: false,
-          message:
-            "Please provide a valid email address.",
-        });
-        return;
-      }
-
-      if (!isStrongPassword(password)) {
-        res.status(400).json({
-          success: false,
-          message:
-            "Password must contain at least 12 characters, including uppercase, lowercase, a number, and a special character.",
-        });
-        return;
-      }
-
-      if (
-        role === "ADMIN" ||
-        role === "SUPER_ADMIN"
-      ) {
-        res.status(403).json({
-          success: false,
-          message:
-            "Privileged accounts cannot be created through public registration.",
-        });
-        return;
-      }
-
-      const registrationRole =
-        role === "CLINICIAN"
-          ? "CLINICIAN"
-          : "PHARMACIST";
-
-      const result =
-        await authService.registerUser({
-          name,
-          email,
-          phone:
-            isNonEmptyString(phone)
-              ? phone
-              : undefined,
-          password,
-          role: registrationRole,
-        });
-
-      await recordAudit(
-        req,
-        {
-          action:
-            "USER_REGISTER",
-          entity:
-            "User",
-          entityId:
-            result.user.id,
-          organizationId:
-            result.user.organizationId ??
-            undefined,
-          details: {
-            email:
-              result.user.email,
-            role:
-              result.user.role,
-            verificationRequired:
-              true,
-          },
-        },
-      );
-
-      res.status(201).json({
-        success: true,
-        message:
-          "Account created successfully. A verification code has been sent to your email address.",
-        data: result,
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes(
-          "already exists",
-        )
-      ) {
-        res.status(409).json({
-          success: false,
-          message:
-            error.message,
-        });
-        return;
-      }
-
-      next(error);
-    }
+  (_req, res) => {
+    res.status(403).json({
+      success: false,
+      code: "PUBLIC_REGISTRATION_DISABLED",
+      message:
+        "Public registration is disabled. Ask your organization administrator for an invitation.",
+    });
   },
 );
-
 /* ============================================================
    VERIFY EMAIL
    ============================================================ */

@@ -21,6 +21,7 @@ import {
 import { recordAudit } from "../middleware/audit.js";
 import {
   assertMonthlyTransactionLimit,
+  lockOrganizationSubscriptionResources,
   SubscriptionLimitError,
 } from "../services/subscriptionLimits.js";
 
@@ -998,6 +999,13 @@ router.post(
               async (tx) => {
                 const now =
                   new Date();
+
+                  // Serialize subscription quota checks and dispensing
+// writes for this organization.
+await lockOrganizationSubscriptionResources(
+  tx,
+  organizationId,
+);
 
                 // Enforce the organization's subscription and monthly
                 // dispensing transaction limit before creating the sale.

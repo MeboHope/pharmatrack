@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -35,6 +35,7 @@ import {
 import { SuperAdminLayout } from "./SuperAdminLayout";
 import SuperAdminBillingPlans from "./SuperAdminBillingPlans";
 import SuperAdminSubscriptions from "./SuperAdminSubscriptions";
+import SuperAdminPlanChangeRequests from "./SuperAdminPlanChangeRequests";
 
 import type {
   SuperAdminSection,
@@ -327,6 +328,7 @@ export function SuperAdminDashboard({
         "system-status",
         "billing-plans",
         "organization-subscriptions",
+                "plan-change-requests",
         "settings",
       ];
 
@@ -4054,6 +4056,9 @@ export function SuperAdminDashboard({
 
       case "organization-subscriptions":
         return <SuperAdminSubscriptions />;
+
+              case "plan-change-requests":
+        return <SuperAdminPlanChangeRequests />;
 
       case "settings":
         return renderSettings();

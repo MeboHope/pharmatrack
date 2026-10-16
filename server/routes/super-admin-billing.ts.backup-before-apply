@@ -1,0 +1,1452 @@
+
+import crypto from "node:crypto";
+import express from "express";
+import { Prisma } from "@prisma/client";
+
+import { prisma } from "../prisma.js";
+import {
+  authenticate,
+  requireSuperAdmin,
+} from "../middleware/auth.js";
+import auditService from "../services/audit.js";
+
+const router = express.Router();
+
+router.use(authenticate);
+router.use(requireSuperAdmin);
+
+const isNonEmptyString = (
+  value: unknown,
+): value is string =>
+  typeof value === "string" &&
+  value.trim().length > 0;
+
+const isValidPrice = (value: unknown): value is number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return false;
+  }
+
+  return value >= 0 && Math.round(value * 100) === value * 100;
+};
+
+const isValidLimit = (value: unknown): value is number | null =>
+  value === null ||
+  (typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0);
+
+const isValidFeatures = (
+  value: unknown,
+): value is Prisma.InputJsonValue =>
+  value !== null &&
+  (Array.isArray(value) ||
+    (typeof value === "object" && value !== null));
+
+const optionalText = (
+  value: unknown,
+): string | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  return value.trim() || null;
+};
+
+const planSelect = {
+  id: true,
+  code: true,
+  name: true,
+  description: true,
+  monthlyPrice: true,
+  annualPrice: true,
+  currency: true,
+  maxUsers: true,
+  maxProducts: true,
+  maxLocations: true,
+  maxMonthlyTransactions: true,
+  features: true,
+  isActive: true,
+  sortOrder: true,
+  createdAt: true,
+  updatedAt: true,
+  _count: {
+    select: {
+      subscriptions: true,
+    },
+  },
+} satisfies Prisma.SubscriptionPlanSelect;
+
+/* GET /api/super-admin/billing/plans */
+router.get("/plans", async (_request, response) => {
+  try {
+    const plans = await prisma.subscriptionPlan.findMany({
+      orderBy: [
+        { sortOrder: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: planSelect,
+    });
+
+    response.json({
+      success: true,
+      data: plans,
+    });
+  } catch (error) {
+    console.error("Failed to list subscription plans:", error);
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch subscription plans.",
+    });
+  }
+});
+
+/* POST /api/super-admin/billing/plans */
+router.post("/plans", async (request, response) => {
+  try {
+    const body = request.body as Record<string, unknown>;
+
+    const {
+      code,
+      name,
+      description,
+      monthlyPrice,
+      annualPrice,
+      currency,
+      maxUsers,
+      maxProducts,
+      maxLocations,
+      maxMonthlyTransactions,
+      features,
+      sortOrder,
+    } = body;
+
+    if (!isNonEmptyString(code) || !/^[A-Za-z0-9_-]{2,40}$/.test(code.trim())) {
+      response.status(400).json({
+        success: false,
+        message: "Plan code must be 2–40 letters, numbers, underscores or hyphens.",
+      });
+      return;
+    }
+
+    if (!isNonEmptyString(name) || name.trim().length > 100) {
+      response.status(400).json({
+        success: false,
+        message: "Plan name is required and must not exceed 100 characters.",
+      });
+      return;
+    }
+
+    if (
+      !isValidPrice(monthlyPrice) ||
+      !isValidPrice(annualPrice)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Monthly and annual prices must be non-negative amounts with at most two decimal places.",
+      });
+      return;
+    }
+
+    const normalizedCurrency =
+      currency === undefined ? "KES" : currency;
+
+    if (
+      typeof normalizedCurrency !== "string" ||
+      !/^[A-Za-z]{3}$/.test(normalizedCurrency)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Currency must be a three-letter currency code.",
+      });
+      return;
+    }
+
+    const limits = {
+      maxUsers,
+      maxProducts,
+      maxLocations,
+      maxMonthlyTransactions,
+    };
+
+    for (const [field, value] of Object.entries(limits)) {
+      if (value !== undefined && !isValidLimit(value)) {
+        response.status(400).json({
+          success: false,
+          message: `${field} must be a non-negative integer or null.`,
+        });
+        return;
+      }
+    }
+
+    if (
+      description !== undefined &&
+      description !== null &&
+      typeof description !== "string"
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Description must be text or null.",
+      });
+      return;
+    }
+
+    if (
+      features !== undefined &&
+      features !== null &&
+      !isValidFeatures(features)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Features must be a JSON object or array, or null.",
+      });
+      return;
+    }
+
+    const normalizedSortOrder =
+      sortOrder === undefined ? 0 : sortOrder;
+
+    if (
+      typeof normalizedSortOrder !== "number" ||
+      !Number.isSafeInteger(normalizedSortOrder) ||
+      normalizedSortOrder < 0
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Sort order must be a non-negative integer.",
+      });
+      return;
+    }
+
+    const normalizedCode = code.trim().toUpperCase();
+
+    const existing = await prisma.subscriptionPlan.findUnique({
+      where: { code: normalizedCode },
+      select: { id: true },
+    });
+
+    if (existing) {
+      response.status(409).json({
+        success: false,
+        message: "A plan with this code already exists.",
+      });
+      return;
+    }
+
+    const plan = await prisma.subscriptionPlan.create({
+      data: {
+        id: crypto.randomUUID(),
+        code: normalizedCode,
+        name: name.trim(),
+        description:
+          typeof description === "string"
+            ? description.trim() || null
+            : null,
+        monthlyPrice,
+        annualPrice,
+        currency: normalizedCurrency.toUpperCase(),
+        maxUsers: maxUsers === undefined ? null : maxUsers as number | null,
+        maxProducts: maxProducts === undefined ? null : maxProducts as number | null,
+        maxLocations: maxLocations === undefined ? null : maxLocations as number | null,
+        maxMonthlyTransactions:
+          maxMonthlyTransactions === undefined
+            ? null
+            : maxMonthlyTransactions as number | null,
+        features:
+          features === undefined || features === null
+            ? Prisma.JsonNull
+            : features as Prisma.InputJsonValue,
+        sortOrder: normalizedSortOrder,
+      },
+      select: planSelect,
+    });
+
+    await auditService.log({
+      action: "SUBSCRIPTION_PLAN_CREATED",
+      entity: "SubscriptionPlan",
+      entityId: plan.id,
+      details: JSON.stringify({
+        code: plan.code,
+        name: plan.name,
+        monthlyPrice: String(plan.monthlyPrice),
+        annualPrice: String(plan.annualPrice),
+        currency: plan.currency,
+      }),
+      userId: request.auth?.sub,
+      ipAddress: request.ip,
+    });
+
+    response.status(201).json({
+      success: true,
+      message: "Subscription plan created successfully.",
+      data: plan,
+    });
+  } catch (error) {
+    console.error("Failed to create subscription plan:", error);
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to create subscription plan.",
+    });
+  }
+});
+
+/* PUT /api/super-admin/billing/plans/:id */
+router.put("/plans/:id", async (request, response) => {
+  try {
+    const id = request.params.id;
+    const body = request.body as Record<string, unknown>;
+
+    const existing = await prisma.subscriptionPlan.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      response.status(404).json({
+        success: false,
+        message: "Subscription plan not found.",
+      });
+      return;
+    }
+
+    const {
+      code,
+      name,
+      description,
+      monthlyPrice,
+      annualPrice,
+      currency,
+      maxUsers,
+      maxProducts,
+      maxLocations,
+      maxMonthlyTransactions,
+      features,
+      sortOrder,
+    } = body;
+
+    if (
+      code !== undefined &&
+      (!isNonEmptyString(code) ||
+        !/^[A-Za-z0-9_-]{2,40}$/.test(code.trim()))
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Plan code must be 2–40 letters, numbers, underscores or hyphens.",
+      });
+      return;
+    }
+
+    if (
+      name !== undefined &&
+      (!isNonEmptyString(name) || name.trim().length > 100)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Plan name is required and must not exceed 100 characters.",
+      });
+      return;
+    }
+
+    if (
+      monthlyPrice !== undefined &&
+      !isValidPrice(monthlyPrice)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Monthly price must be a non-negative amount with at most two decimal places.",
+      });
+      return;
+    }
+
+    if (
+      annualPrice !== undefined &&
+      !isValidPrice(annualPrice)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Annual price must be a non-negative amount with at most two decimal places.",
+      });
+      return;
+    }
+
+    if (
+      currency !== undefined &&
+      (typeof currency !== "string" ||
+        !/^[A-Za-z]{3}$/.test(currency))
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Currency must be a three-letter currency code.",
+      });
+      return;
+    }
+
+    const limits = {
+      maxUsers,
+      maxProducts,
+      maxLocations,
+      maxMonthlyTransactions,
+    };
+
+    for (const [field, value] of Object.entries(limits)) {
+      if (value !== undefined && !isValidLimit(value)) {
+        response.status(400).json({
+          success: false,
+          message: `${field} must be a non-negative integer or null.`,
+        });
+        return;
+      }
+    }
+
+    if (
+      description !== undefined &&
+      description !== null &&
+      typeof description !== "string"
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Description must be text or null.",
+      });
+      return;
+    }
+
+    if (
+      features !== undefined &&
+      features !== null &&
+      !isValidFeatures(features)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Features must be a JSON object or array, or null.",
+      });
+      return;
+    }
+
+    if (
+      sortOrder !== undefined &&
+      (typeof sortOrder !== "number" ||
+        !Number.isSafeInteger(sortOrder) ||
+        sortOrder < 0)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Sort order must be a non-negative integer.",
+      });
+      return;
+    }
+
+    const normalizedCode =
+      typeof code === "string"
+        ? code.trim().toUpperCase()
+        : undefined;
+
+    if (normalizedCode) {
+      const duplicate = await prisma.subscriptionPlan.findFirst({
+        where: {
+          code: normalizedCode,
+          NOT: { id },
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        response.status(409).json({
+          success: false,
+          message: "Another plan already uses this code.",
+        });
+        return;
+      }
+    }
+
+    const updated = await prisma.subscriptionPlan.update({
+      where: { id },
+      data: {
+        ...(normalizedCode !== undefined && { code: normalizedCode }),
+        ...(name !== undefined && { name: (name as string).trim() }),
+        ...(description !== undefined && {
+          description:
+            typeof description === "string"
+              ? description.trim() || null
+              : null,
+        }),
+        ...(monthlyPrice !== undefined && { monthlyPrice }),
+        ...(annualPrice !== undefined && { annualPrice }),
+        ...(currency !== undefined && {
+          currency: (currency as string).toUpperCase(),
+        }),
+        ...(maxUsers !== undefined && { maxUsers: maxUsers as number | null }),
+        ...(maxProducts !== undefined && { maxProducts: maxProducts as number | null }),
+        ...(maxLocations !== undefined && { maxLocations: maxLocations as number | null }),
+        ...(maxMonthlyTransactions !== undefined && {
+          maxMonthlyTransactions: maxMonthlyTransactions as number | null,
+        }),
+        ...(features !== undefined && {
+          features:
+            features === null
+              ? Prisma.JsonNull
+              : features as Prisma.InputJsonValue,
+        }),
+        ...(sortOrder !== undefined && { sortOrder }),
+      },
+      select: planSelect,
+    });
+
+    await auditService.log({
+      action: "SUBSCRIPTION_PLAN_UPDATED",
+      entity: "SubscriptionPlan",
+      entityId: updated.id,
+      details: JSON.stringify({
+        before: {
+          code: existing.code,
+          name: existing.name,
+          monthlyPrice: String(existing.monthlyPrice),
+          annualPrice: String(existing.annualPrice),
+          currency: existing.currency,
+          isActive: existing.isActive,
+        },
+        after: {
+          code: updated.code,
+          name: updated.name,
+          monthlyPrice: String(updated.monthlyPrice),
+          annualPrice: String(updated.annualPrice),
+          currency: updated.currency,
+          isActive: updated.isActive,
+        },
+      }),
+      userId: request.auth?.sub,
+      ipAddress: request.ip,
+    });
+
+    response.json({
+      success: true,
+      message: "Subscription plan updated successfully.",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Failed to update subscription plan:", error);
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to update subscription plan.",
+    });
+  }
+});
+
+/* PATCH /api/super-admin/billing/plans/:id/status */
+router.patch("/plans/:id/status", async (request, response) => {
+  try {
+    const { isActive } = request.body as {
+      isActive?: unknown;
+    };
+
+    if (typeof isActive !== "boolean") {
+      response.status(400).json({
+        success: false,
+        message: "isActive must be true or false.",
+      });
+      return;
+    }
+
+    const existing = await prisma.subscriptionPlan.findUnique({
+      where: { id: request.params.id },
+    });
+
+    if (!existing) {
+      response.status(404).json({
+        success: false,
+        message: "Subscription plan not found.",
+      });
+      return;
+    }
+
+    const plan = await prisma.subscriptionPlan.update({
+      where: { id: existing.id },
+      data: { isActive },
+      select: planSelect,
+    });
+
+    await auditService.log({
+      action: isActive
+        ? "SUBSCRIPTION_PLAN_ACTIVATED"
+        : "SUBSCRIPTION_PLAN_DEACTIVATED",
+      entity: "SubscriptionPlan",
+      entityId: plan.id,
+      details: JSON.stringify({
+        code: plan.code,
+        name: plan.name,
+        previousIsActive: existing.isActive,
+        isActive: plan.isActive,
+      }),
+      userId: request.auth?.sub,
+      ipAddress: request.ip,
+    });
+
+    response.json({
+      success: true,
+      message: isActive
+        ? "Subscription plan activated."
+        : "Subscription plan deactivated.",
+      data: plan,
+    });
+  } catch (error) {
+    console.error("Failed to change subscription plan status:", error);
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to change subscription plan status.",
+    });
+  }
+});
+
+
+// ============================================================
+// ORGANIZATION SUBSCRIPTION MANAGEMENT
+// ============================================================
+
+const subscriptionSelect = {
+  id: true,
+  organizationId: true,
+  planId: true,
+  status: true,
+  billingInterval: true,
+  amount: true,
+  currency: true,
+  startedAt: true,
+  trialStartsAt: true,
+  trialEndsAt: true,
+  currentPeriodStart: true,
+  currentPeriodEnd: true,
+  cancelAtPeriodEnd: true,
+  canceledAt: true,
+  endedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  organization: {
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      status: true,
+      email: true,
+    },
+  },
+  plan: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      monthlyPrice: true,
+      annualPrice: true,
+      currency: true,
+    },
+  },
+} as const;
+
+const addBillingPeriod = (
+  date: Date,
+  interval: "MONTHLY" | "ANNUAL",
+): Date => {
+  const result = new Date(date);
+
+  if (interval === "MONTHLY") {
+    result.setUTCMonth(result.getUTCMonth() + 1);
+  } else {
+    result.setUTCFullYear(result.getUTCFullYear() + 1);
+  }
+
+  return result;
+};
+
+/* GET /api/super-admin/billing/subscriptions */
+router.get("/subscriptions", async (_request, response) => {
+  try {
+    const subscriptions =
+      await prisma.organizationSubscription.findMany({
+        orderBy: [
+          { createdAt: "desc" },
+        ],
+        select: subscriptionSelect,
+      });
+
+    response.json({
+      success: true,
+      data: subscriptions,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to list organization subscriptions:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to load organization subscriptions.",
+    });
+  }
+});
+
+/*
+ * POST /api/super-admin/billing/organizations/:organizationId/subscription
+ *
+ * Creates a new subscription record.
+ * The amount and currency always come from the server-side plan.
+ */
+router.post(
+  "/organizations/:organizationId/subscription",
+  async (request, response) => {
+    try {
+      const { organizationId } = request.params;
+
+      const body = request.body as {
+        planId?: unknown;
+        billingInterval?: unknown;
+        status?: unknown;
+        trialDays?: unknown;
+      };
+
+      const {
+        planId,
+        billingInterval,
+        status = "PENDING",
+        trialDays,
+      } = body;
+
+      if (
+        typeof planId !== "string" ||
+        !planId.trim()
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "A valid subscription plan is required.",
+        });
+        return;
+      }
+
+      if (
+        billingInterval !== "MONTHLY" &&
+        billingInterval !== "ANNUAL"
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Billing interval must be MONTHLY or ANNUAL.",
+        });
+        return;
+      }
+
+      if (
+        status !== "PENDING" &&
+        status !== "ACTIVE" &&
+        status !== "TRIALING"
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Initial status must be PENDING, ACTIVE, or TRIALING.",
+        });
+        return;
+      }
+
+      if (
+        status === "TRIALING" &&
+        (
+          !Number.isInteger(trialDays) ||
+          (trialDays as number) < 1 ||
+          (trialDays as number) > 90
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Trial duration must be between 1 and 90 days.",
+        });
+        return;
+      }
+
+      if (
+        status !== "TRIALING" &&
+        trialDays !== undefined
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Trial duration is only valid for a TRIALING subscription.",
+        });
+        return;
+      }
+
+      const [organization, plan] = await Promise.all([
+        prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: {
+            id: true,
+            name: true,
+          },
+        }),
+        prisma.subscriptionPlan.findUnique({
+          where: { id: planId },
+        }),
+      ]);
+
+      if (!organization) {
+        response.status(404).json({
+          success: false,
+          message: "Organization not found.",
+        });
+        return;
+      }
+
+      if (!plan || !plan.isActive) {
+        response.status(400).json({
+          success: false,
+          message: "The selected plan does not exist or is inactive.",
+        });
+        return;
+      }
+
+      const now = new Date();
+
+      const amount =
+        billingInterval === "MONTHLY"
+          ? plan.monthlyPrice
+          : plan.annualPrice;
+
+      const trialEndsAt =
+        status === "TRIALING"
+          ? new Date(
+              now.getTime() +
+              (trialDays as number) * 24 * 60 * 60 * 1000,
+            )
+          : null;
+
+      const subscription =
+        await prisma.$transaction(async (tx) => {
+          // Close any current subscription before assigning another.
+          // Historical records are retained.
+          await tx.organizationSubscription.updateMany({
+            where: {
+              organizationId,
+              status: {
+                in: [
+                  "PENDING",
+                  "TRIALING",
+                  "ACTIVE",
+                  "PAST_DUE",
+                ],
+              },
+            },
+            data: {
+              status: "CANCELED",
+              canceledAt: now,
+              endedAt: now,
+              cancelAtPeriodEnd: false,
+            },
+          });
+
+          return tx.organizationSubscription.create({
+            data: {
+              organizationId,
+              planId: plan.id,
+              billingInterval,
+              status,
+              amount,
+              currency: plan.currency,
+              startedAt:
+                status === "ACTIVE" || status === "TRIALING"
+                  ? now
+                  : null,
+              trialStartsAt:
+                status === "TRIALING" ? now : null,
+              trialEndsAt,
+              currentPeriodStart:
+                status === "ACTIVE" ? now : null,
+              currentPeriodEnd:
+                status === "ACTIVE"
+                  ? addBillingPeriod(now, billingInterval)
+                  : null,
+            },
+            select: subscriptionSelect,
+          });
+        });
+
+      await auditService.log({
+        action: "ORGANIZATION_SUBSCRIPTION_ASSIGNED",
+        entity: "OrganizationSubscription",
+        entityId: subscription.id,
+        details: JSON.stringify({
+          organizationId,
+          organizationName: organization.name,
+          planId: plan.id,
+          planCode: plan.code,
+          planName: plan.name,
+          billingInterval,
+          status,
+          amount: String(amount),
+          currency: plan.currency,
+          trialDays: status === "TRIALING" ? trialDays : null,
+        }),
+        userId: request.auth?.sub,
+        ipAddress: request.ip,
+      });
+
+      response.status(201).json({
+        success: true,
+        message: "Organization subscription assigned successfully.",
+        data: subscription,
+      });
+    } catch (error) {
+      console.error(
+        "Failed to assign organization subscription:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to assign organization subscription.",
+      });
+    }
+  },
+);
+
+/*
+ * PATCH /api/super-admin/billing/subscriptions/:id/status
+ *
+ * Administrative status change only; no payment is created.
+ */
+router.patch(
+  "/subscriptions/:id/status",
+  async (request, response) => {
+    try {
+      const { id } = request.params;
+      const body = request.body as {
+        status?: unknown;
+      };
+
+      const allowedStatuses = [
+        "PENDING",
+        "TRIALING",
+        "ACTIVE",
+        "PAST_DUE",
+        "CANCELED",
+        "EXPIRED",
+      ] as const;
+
+      if (
+        typeof body.status !== "string" ||
+        !allowedStatuses.includes(
+          body.status as (typeof allowedStatuses)[number],
+        )
+      ) {
+        response.status(400).json({
+          success: false,
+          message: "Invalid subscription status.",
+        });
+        return;
+      }
+
+      const existing =
+        await prisma.organizationSubscription.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            organizationId: true,
+            status: true,
+            billingInterval: true,
+            startedAt: true,
+            trialStartsAt: true,
+            trialEndsAt: true,
+            currentPeriodStart: true,
+            currentPeriodEnd: true,
+            cancelAtPeriodEnd: true,
+            canceledAt: true,
+            endedAt: true,
+          },
+        });
+
+      if (!existing) {
+        response.status(404).json({
+          success: false,
+          message: "Subscription not found.",
+        });
+        return;
+      }
+
+      const nextStatus =
+        body.status as (typeof allowedStatuses)[number];
+
+      const now = new Date();
+
+      const data: {
+        status: (typeof allowedStatuses)[number];
+        startedAt?: Date | null;
+        trialStartsAt?: Date | null;
+        trialEndsAt?: Date | null;
+        currentPeriodStart?: Date | null;
+        currentPeriodEnd?: Date | null;
+        canceledAt?: Date | null;
+        endedAt?: Date | null;
+        cancelAtPeriodEnd?: boolean;
+      } = {
+        status: nextStatus,
+      };
+
+      if (nextStatus === "ACTIVE") {
+        data.startedAt = existing.startedAt ?? now;
+        data.currentPeriodStart =
+          existing.currentPeriodStart ?? now;
+        data.currentPeriodEnd =
+          existing.currentPeriodEnd ??
+          addBillingPeriod(now, existing.billingInterval);
+        data.canceledAt = null;
+        data.endedAt = null;
+        data.cancelAtPeriodEnd = false;
+      } else if (nextStatus === "TRIALING") {
+        const trialStart = existing.trialStartsAt ?? now;
+
+        data.startedAt = existing.startedAt ?? now;
+        data.trialStartsAt = trialStart;
+        data.trialEndsAt =
+          existing.trialEndsAt ??
+          new Date(
+            trialStart.getTime() + 14 * 24 * 60 * 60 * 1000,
+          );
+        data.currentPeriodStart = null;
+        data.currentPeriodEnd = null;
+        data.canceledAt = null;
+        data.endedAt = null;
+        data.cancelAtPeriodEnd = false;
+      } else if (nextStatus === "CANCELED") {
+        data.canceledAt = now;
+        data.endedAt = now;
+        data.cancelAtPeriodEnd = false;
+      } else if (nextStatus === "EXPIRED") {
+        data.endedAt = now;
+        data.cancelAtPeriodEnd = false;
+      } else if (nextStatus === "PENDING") {
+        data.cancelAtPeriodEnd = false;
+      }
+
+      const subscription =
+        await prisma.organizationSubscription.update({
+          where: { id },
+          data,
+          select: subscriptionSelect,
+        });
+
+      await auditService.log({
+        action: "ORGANIZATION_SUBSCRIPTION_STATUS_CHANGED",
+        entity: "OrganizationSubscription",
+        entityId: id,
+        details: JSON.stringify({
+          organizationId: existing.organizationId,
+          previousStatus: existing.status,
+          newStatus: nextStatus,
+        }),
+        userId: request.auth?.sub,
+        ipAddress: request.ip,
+      });
+
+      response.json({
+        success: true,
+        message: "Subscription status updated successfully.",
+        data: subscription,
+      });
+    } catch (error) {
+      console.error(
+        "Failed to change subscription status:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to change subscription status.",
+      });
+    }
+  },
+);
+
+/* ============================================================
+   SUBSCRIPTION PLAN-CHANGE REQUESTS
+   ============================================================ */
+
+/*
+ * GET /api/super-admin/billing/plan-change-requests
+ *
+ * Platform-wide request list for Super Admin review.
+ */
+
+router.get("/plan-change-requests", async (request, response) => {
+  try {
+    const statusFilter = request.query.status;
+
+    const allowedStatuses = [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "APPLIED",
+    ] as const;
+
+    if (
+      typeof statusFilter === "string" &&
+      !allowedStatuses.includes(
+        statusFilter as (typeof allowedStatuses)[number],
+      )
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid plan-change request status filter.",
+      });
+      return;
+    }
+
+    const parsedLimit = Number(request.query.limit ?? 100);
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit >= 1
+        ? Math.min(parsedLimit, 200)
+        : 100;
+
+    const requests =
+      await prisma.subscriptionChangeRequest.findMany({
+        where:
+          typeof statusFilter === "string"
+            ? { status: statusFilter as (typeof allowedStatuses)[number] }
+            : undefined,
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        take: limit,
+        select: {
+          id: true,
+          organizationId: true,
+          requestedById: true,
+          requestedPlanId: true,
+          requestedInterval: true,
+          status: true,
+          requestReason: true,
+          reviewedById: true,
+          reviewedAt: true,
+          decisionReason: true,
+          appliedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              status: true,
+              email: true,
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          reviewedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          requestedPlan: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              description: true,
+              monthlyPrice: true,
+              annualPrice: true,
+              currency: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+    response.json({
+      success: true,
+      data: requests,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch subscription plan-change requests:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch plan-change requests.",
+    });
+  }
+});
+
+/*
+ * PATCH /api/super-admin/billing/plan-change-requests/:id/review
+ *
+ * Body:
+ * {
+ *   "decision": "APPROVE" | "REJECT",
+ *   "reason": "Optional explanation, required for rejection"
+ * }
+ *
+ * Approval does not activate or replace a subscription.
+ * A later, separate payment-confirmation or explicitly
+ * permitted free/trial flow must apply the change.
+ */
+
+router.patch(
+  "/plan-change-requests/:id/review",
+  async (request, response) => {
+    try {
+      const requestId =
+        typeof request.params.id === "string"
+          ? request.params.id.trim()
+          : "";
+
+      const reviewerId = request.auth?.sub;
+
+      const body = request.body as {
+        decision?: unknown;
+        reason?: unknown;
+      };
+
+      const decision = body.decision;
+
+      const reason =
+        typeof body.reason === "string"
+          ? body.reason.trim()
+          : "";
+
+      if (!requestId) {
+        response.status(400).json({
+          success: false,
+          message: "A plan-change request ID is required.",
+        });
+        return;
+      }
+
+      if (!reviewerId) {
+        response.status(401).json({
+          success: false,
+          message: "Authenticated Super Admin context is required.",
+        });
+        return;
+      }
+
+      if (decision !== "APPROVE" && decision !== "REJECT") {
+        response.status(400).json({
+          success: false,
+          message: "Decision must be APPROVE or REJECT.",
+        });
+        return;
+      }
+
+      if (reason.length > 1000) {
+        response.status(400).json({
+          success: false,
+          message: "The review reason cannot exceed 1000 characters.",
+        });
+        return;
+      }
+
+      if (decision === "REJECT" && !reason) {
+        response.status(400).json({
+          success: false,
+          message: "A reason is required when rejecting a request.",
+        });
+        return;
+      }
+
+      const updatedRequest = await prisma.$transaction(
+        async (tx) => {
+          /*
+           * Find the request to determine which organization
+           * must be locked. Re-read it after obtaining the lock
+           * to avoid acting on stale status.
+           */
+          const initialRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+              },
+            });
+
+          if (!initialRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "Organization"
+            WHERE "id" = ${initialRequest.organizationId}
+            FOR UPDATE
+          `;
+
+          const currentRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+                status: true,
+              },
+            });
+
+          if (!currentRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          if (currentRequest.status !== "PENDING") {
+            throw new Error("PLAN_CHANGE_REQUEST_ALREADY_REVIEWED");
+          }
+
+          const nextStatus =
+            decision === "APPROVE" ? "APPROVED" : "REJECTED";
+
+          /*
+           * Conditional update is a second concurrency guard.
+           * The request must still be PENDING when this update
+           * executes.
+           */
+          const updateResult =
+            await tx.subscriptionChangeRequest.updateMany({
+              where: {
+                id: requestId,
+                organizationId: currentRequest.organizationId,
+                status: "PENDING",
+              },
+              data: {
+                status: nextStatus,
+                reviewedById: reviewerId,
+                reviewedAt: new Date(),
+                decisionReason: reason || null,
+              },
+            });
+
+          if (updateResult.count !== 1) {
+            throw new Error("PLAN_CHANGE_REQUEST_ALREADY_REVIEWED");
+          }
+
+          return tx.subscriptionChangeRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            select: {
+              id: true,
+              organizationId: true,
+              requestedById: true,
+              requestedPlanId: true,
+              requestedInterval: true,
+              status: true,
+              requestReason: true,
+              reviewedById: true,
+              reviewedAt: true,
+              decisionReason: true,
+              appliedAt: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                  type: true,
+                  status: true,
+                  email: true,
+                },
+              },
+              requestedBy: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              reviewedBy: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              requestedPlan: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  monthlyPrice: true,
+                  annualPrice: true,
+                  currency: true,
+                  isActive: true,
+                },
+              },
+            },
+          });
+        },
+        {
+          maxWait: 5000,
+          timeout: 10000,
+        },
+      );
+
+      await auditService.log({
+        action:
+          decision === "APPROVE"
+            ? "SUBSCRIPTION_CHANGE_REQUEST_APPROVED"
+            : "SUBSCRIPTION_CHANGE_REQUEST_REJECTED",
+        entity: "SubscriptionChangeRequest",
+        entityId: updatedRequest.id,
+        details: JSON.stringify({
+          organizationId: updatedRequest.organizationId,
+          requestedPlanId: updatedRequest.requestedPlanId,
+          requestedInterval: updatedRequest.requestedInterval,
+          decision,
+          reason: reason || null,
+          resultingStatus: updatedRequest.status,
+        }),
+        userId: reviewerId,
+        ipAddress: request.ip,
+        organizationId: updatedRequest.organizationId,
+      });
+
+      response.json({
+        success: true,
+        message:
+          decision === "APPROVE"
+            ? "The plan-change request has been approved. The current subscription has not been changed."
+            : "The plan-change request has been rejected.",
+        data: updatedRequest,
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "PLAN_CHANGE_REQUEST_NOT_FOUND") {
+          response.status(404).json({
+            success: false,
+            message: "Plan-change request not found.",
+          });
+          return;
+        }
+
+        if (
+          error.message === "PLAN_CHANGE_REQUEST_ALREADY_REVIEWED"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "This request has already been reviewed and can no longer be reviewed again.",
+          });
+          return;
+        }
+      }
+
+      console.error(
+        "Failed to review subscription plan-change request:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to review the plan-change request.",
+      });
+    }
+  },
+);
+export default router;

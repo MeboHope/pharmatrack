@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Users,
   X,
+  FileCheck,
 } from "lucide-react";
 
 export type SuperAdminSection =
@@ -23,7 +24,8 @@ export type SuperAdminSection =
   | "system-status"
   | "settings"
   | "billing-plans"
-  | "organization-subscriptions";
+  | "organization-subscriptions"
+  | "plan-change-requests";
 
 interface SuperAdminSidebarProps {
   activeSection: SuperAdminSection;
@@ -92,6 +94,12 @@ const managementNavigation: NavigationItem[] = [
     label: "Organization Subscriptions",
     description: "Assign and manage organization plans",
     icon: Building2,
+  },
+    {
+    id: "plan-change-requests",
+    label: "Plan Change Requests",
+    description: "Review and apply plan changes",
+    icon: FileCheck,
   },
   {
     id: "settings",

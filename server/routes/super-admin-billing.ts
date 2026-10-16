@@ -1059,4 +1059,765 @@ router.patch(
   },
 );
 
+/* ============================================================
+   SUBSCRIPTION PLAN-CHANGE REQUESTS
+   ============================================================ */
+
+/*
+ * GET /api/super-admin/billing/plan-change-requests
+ *
+ * Platform-wide request list for Super Admin review.
+ */
+
+router.get("/plan-change-requests", async (request, response) => {
+  try {
+    const statusFilter = request.query.status;
+
+    const allowedStatuses = [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "APPLIED",
+    ] as const;
+
+    if (
+      typeof statusFilter === "string" &&
+      !allowedStatuses.includes(
+        statusFilter as (typeof allowedStatuses)[number],
+      )
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid plan-change request status filter.",
+      });
+      return;
+    }
+
+    const parsedLimit = Number(request.query.limit ?? 100);
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit >= 1
+        ? Math.min(parsedLimit, 200)
+        : 100;
+
+    const requests =
+      await prisma.subscriptionChangeRequest.findMany({
+        where:
+          typeof statusFilter === "string"
+            ? { status: statusFilter as (typeof allowedStatuses)[number] }
+            : undefined,
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        take: limit,
+        select: {
+          id: true,
+          organizationId: true,
+          requestedById: true,
+          requestedPlanId: true,
+          requestedInterval: true,
+          status: true,
+          requestReason: true,
+          reviewedById: true,
+          reviewedAt: true,
+          decisionReason: true,
+          appliedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              status: true,
+              email: true,
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          reviewedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          requestedPlan: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              description: true,
+              monthlyPrice: true,
+              annualPrice: true,
+              currency: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+    response.json({
+      success: true,
+      data: requests,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch subscription plan-change requests:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch plan-change requests.",
+    });
+  }
+});
+
+/*
+ * PATCH /api/super-admin/billing/plan-change-requests/:id/review
+ *
+ * Body:
+ * {
+ *   "decision": "APPROVE" | "REJECT",
+ *   "reason": "Optional explanation, required for rejection"
+ * }
+ *
+ * Approval does not activate or replace a subscription.
+ * A later, separate payment-confirmation or explicitly
+ * permitted free/trial flow must apply the change.
+ */
+
+router.patch(
+  "/plan-change-requests/:id/review",
+  async (request, response) => {
+    try {
+      const requestId =
+        typeof request.params.id === "string"
+          ? request.params.id.trim()
+          : "";
+
+      const reviewerId = request.auth?.sub;
+
+      const body = request.body as {
+        decision?: unknown;
+        reason?: unknown;
+      };
+
+      const decision = body.decision;
+
+      const reason =
+        typeof body.reason === "string"
+          ? body.reason.trim()
+          : "";
+
+      if (!requestId) {
+        response.status(400).json({
+          success: false,
+          message: "A plan-change request ID is required.",
+        });
+        return;
+      }
+
+      if (!reviewerId) {
+        response.status(401).json({
+          success: false,
+          message: "Authenticated Super Admin context is required.",
+        });
+        return;
+      }
+
+      if (decision !== "APPROVE" && decision !== "REJECT") {
+        response.status(400).json({
+          success: false,
+          message: "Decision must be APPROVE or REJECT.",
+        });
+        return;
+      }
+
+      if (reason.length > 1000) {
+        response.status(400).json({
+          success: false,
+          message: "The review reason cannot exceed 1000 characters.",
+        });
+        return;
+      }
+
+      if (decision === "REJECT" && !reason) {
+        response.status(400).json({
+          success: false,
+          message: "A reason is required when rejecting a request.",
+        });
+        return;
+      }
+
+      const updatedRequest = await prisma.$transaction(
+        async (tx) => {
+          /*
+           * Find the request to determine which organization
+           * must be locked. Re-read it after obtaining the lock
+           * to avoid acting on stale status.
+           */
+          const initialRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+              },
+            });
+
+          if (!initialRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "Organization"
+            WHERE "id" = ${initialRequest.organizationId}
+            FOR UPDATE
+          `;
+
+          const currentRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+                status: true,
+              },
+            });
+
+          if (!currentRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          if (currentRequest.status !== "PENDING") {
+            throw new Error("PLAN_CHANGE_REQUEST_ALREADY_REVIEWED");
+          }
+
+          const nextStatus =
+            decision === "APPROVE" ? "APPROVED" : "REJECTED";
+
+          /*
+           * Conditional update is a second concurrency guard.
+           * The request must still be PENDING when this update
+           * executes.
+           */
+          const updateResult =
+            await tx.subscriptionChangeRequest.updateMany({
+              where: {
+                id: requestId,
+                organizationId: currentRequest.organizationId,
+                status: "PENDING",
+              },
+              data: {
+                status: nextStatus,
+                reviewedById: reviewerId,
+                reviewedAt: new Date(),
+                decisionReason: reason || null,
+              },
+            });
+
+          if (updateResult.count !== 1) {
+            throw new Error("PLAN_CHANGE_REQUEST_ALREADY_REVIEWED");
+          }
+
+          return tx.subscriptionChangeRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            select: {
+              id: true,
+              organizationId: true,
+              requestedById: true,
+              requestedPlanId: true,
+              requestedInterval: true,
+              status: true,
+              requestReason: true,
+              reviewedById: true,
+              reviewedAt: true,
+              decisionReason: true,
+              appliedAt: true,
+              createdAt: true,
+              updatedAt: true,
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                  type: true,
+                  status: true,
+                  email: true,
+                },
+              },
+              requestedBy: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              reviewedBy: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              requestedPlan: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  monthlyPrice: true,
+                  annualPrice: true,
+                  currency: true,
+                  isActive: true,
+                },
+              },
+            },
+          });
+        },
+        {
+          maxWait: 5000,
+          timeout: 10000,
+        },
+      );
+
+      await auditService.log({
+        action:
+          decision === "APPROVE"
+            ? "SUBSCRIPTION_CHANGE_REQUEST_APPROVED"
+            : "SUBSCRIPTION_CHANGE_REQUEST_REJECTED",
+        entity: "SubscriptionChangeRequest",
+        entityId: updatedRequest.id,
+        details: JSON.stringify({
+          organizationId: updatedRequest.organizationId,
+          requestedPlanId: updatedRequest.requestedPlanId,
+          requestedInterval: updatedRequest.requestedInterval,
+          decision,
+          reason: reason || null,
+          resultingStatus: updatedRequest.status,
+        }),
+        userId: reviewerId,
+        ipAddress: request.ip,
+        organizationId: updatedRequest.organizationId,
+      });
+
+      response.json({
+        success: true,
+        message:
+          decision === "APPROVE"
+            ? "The plan-change request has been approved. The current subscription has not been changed."
+            : "The plan-change request has been rejected.",
+        data: updatedRequest,
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "PLAN_CHANGE_REQUEST_NOT_FOUND") {
+          response.status(404).json({
+            success: false,
+            message: "Plan-change request not found.",
+          });
+          return;
+        }
+
+        if (
+          error.message === "PLAN_CHANGE_REQUEST_ALREADY_REVIEWED"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "This request has already been reviewed and can no longer be reviewed again.",
+          });
+          return;
+        }
+      }
+
+      console.error(
+        "Failed to review subscription plan-change request:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to review the plan-change request.",
+      });
+    }
+  },
+);
+
+/*
+ * POST /api/super-admin/billing/plan-change-requests/:id/apply
+ *
+ * Explicit manual activation of an approved plan-change request.
+ *
+ * IMPORTANT:
+ * This endpoint does not confirm or record payment.
+ * A Super Admin must explicitly confirm manual activation.
+ * Subscription creation and request application are atomic.
+ */
+router.post(
+  "/plan-change-requests/:id/apply",
+  async (request, response) => {
+    try {
+      const requestId =
+        typeof request.params.id === "string"
+          ? request.params.id.trim()
+          : "";
+
+      const actorId = request.auth?.sub;
+
+      const body = request.body as {
+        confirmManualActivation?: unknown;
+      };
+
+      if (!requestId) {
+        response.status(400).json({
+          success: false,
+          message: "A plan-change request ID is required.",
+        });
+        return;
+      }
+
+      if (!actorId) {
+        response.status(401).json({
+          success: false,
+          message: "Authenticated Super Admin context is required.",
+        });
+        return;
+      }
+
+      if (body.confirmManualActivation !== true) {
+        response.status(400).json({
+          success: false,
+          message:
+            "Explicit confirmation of manual activation is required.",
+        });
+        return;
+      }
+
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const initialRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+              },
+            });
+
+          if (!initialRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          /*
+           * Serialize subscription changes for this organization.
+           * The lock is held until the transaction commits or rolls back.
+           */
+          const lockedOrganizations =
+            await tx.$queryRaw<Array<{ id: string }>>`
+              SELECT "id"
+              FROM "Organization"
+              WHERE "id" = ${initialRequest.organizationId}
+              FOR UPDATE
+            `;
+
+          if (lockedOrganizations.length !== 1) {
+            throw new Error("PLAN_CHANGE_ORGANIZATION_NOT_FOUND");
+          }
+
+          /*
+           * Re-read after obtaining the lock. This prevents two
+           * concurrent requests from applying the same change.
+           */
+          const currentRequest =
+            await tx.subscriptionChangeRequest.findUnique({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+                requestedPlanId: true,
+                requestedInterval: true,
+                status: true,
+                requestedPlan: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    monthlyPrice: true,
+                    annualPrice: true,
+                    currency: true,
+                    isActive: true,
+                  },
+                },
+                organization: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            });
+
+          if (!currentRequest) {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_FOUND");
+          }
+
+          if (currentRequest.status !== "APPROVED") {
+            throw new Error("PLAN_CHANGE_REQUEST_NOT_APPROVED");
+          }
+
+          const plan = currentRequest.requestedPlan;
+          const organizationId = currentRequest.organizationId;
+          const billingInterval = currentRequest.requestedInterval;
+
+          if (!plan || !plan.isActive) {
+            throw new Error("PLAN_CHANGE_REQUEST_PLAN_INACTIVE");
+          }
+
+          const now = new Date();
+
+          const amount =
+            billingInterval === "MONTHLY"
+              ? plan.monthlyPrice
+              : plan.annualPrice;
+
+          /*
+           * Preserve historical subscriptions. Only current or
+           * pending subscriptions are closed before the new one
+           * is created.
+           */
+          await tx.organizationSubscription.updateMany({
+            where: {
+              organizationId,
+              status: {
+                in: [
+                  "PENDING",
+                  "TRIALING",
+                  "ACTIVE",
+                  "PAST_DUE",
+                ],
+              },
+            },
+            data: {
+              status: "CANCELED",
+              canceledAt: now,
+              endedAt: now,
+              cancelAtPeriodEnd: false,
+            },
+          });
+
+          const subscription =
+            await tx.organizationSubscription.create({
+              data: {
+                organizationId,
+                planId: plan.id,
+                billingInterval,
+                status: "ACTIVE",
+                amount,
+                currency: plan.currency,
+                startedAt: now,
+                currentPeriodStart: now,
+                currentPeriodEnd: addBillingPeriod(
+                  now,
+                  billingInterval,
+                ),
+                trialStartsAt: null,
+                trialEndsAt: null,
+                cancelAtPeriodEnd: false,
+              },
+              select: subscriptionSelect,
+            });
+
+          /*
+           * Conditional update is a second concurrency guard.
+           * If the request is no longer APPROVED, throwing here
+           * rolls back the subscription changes as well.
+           */
+          const applied =
+            await tx.subscriptionChangeRequest.updateMany({
+              where: {
+                id: requestId,
+                organizationId,
+                status: "APPROVED",
+              },
+              data: {
+                status: "APPLIED",
+                appliedAt: now,
+              },
+            });
+
+          if (applied.count !== 1) {
+            throw new Error("PLAN_CHANGE_REQUEST_ALREADY_APPLIED");
+          }
+
+          const updatedRequest =
+            await tx.subscriptionChangeRequest.findUniqueOrThrow({
+              where: { id: requestId },
+              select: {
+                id: true,
+                organizationId: true,
+                requestedById: true,
+                requestedPlanId: true,
+                requestedInterval: true,
+                status: true,
+                requestReason: true,
+                reviewedById: true,
+                reviewedAt: true,
+                decisionReason: true,
+                appliedAt: true,
+                createdAt: true,
+                updatedAt: true,
+                organization: {
+                  select: {
+                    id: true,
+                    name: true,
+                    type: true,
+                    status: true,
+                    email: true,
+                  },
+                },
+                requestedBy: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+                reviewedBy: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+                requestedPlan: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    description: true,
+                    monthlyPrice: true,
+                    annualPrice: true,
+                    currency: true,
+                    isActive: true,
+                  },
+                },
+              },
+            });
+
+          return {
+            subscription,
+            updatedRequest,
+            organizationName: currentRequest.organization.name,
+            planCode: plan.code,
+            planName: plan.name,
+            amount: String(amount),
+            currency: plan.currency,
+            billingInterval,
+          };
+        },
+        {
+          maxWait: 5000,
+          timeout: 10000,
+        },
+      );
+
+      /*
+       * Audit after the transaction commits. No payment record is
+       * created, because this action is not payment confirmation.
+       */
+      await auditService.log({
+        action: "SUBSCRIPTION_CHANGE_REQUEST_APPLIED",
+        entity: "SubscriptionChangeRequest",
+        entityId: result.updatedRequest.id,
+        details: JSON.stringify({
+          organizationId: result.updatedRequest.organizationId,
+          organizationName: result.organizationName,
+          subscriptionId: result.subscription.id,
+          requestedPlanId: result.updatedRequest.requestedPlanId,
+          planCode: result.planCode,
+          planName: result.planName,
+          billingInterval: result.billingInterval,
+          amount: result.amount,
+          currency: result.currency,
+          activationMethod: "MANUAL_SUPER_ADMIN",
+          paymentConfirmed: false,
+        }),
+        userId: actorId,
+        ipAddress: request.ip,
+        organizationId: result.updatedRequest.organizationId,
+      });
+
+      response.json({
+        success: true,
+        message:
+          "The approved plan change has been applied through manual activation. No payment was verified or recorded.",
+        data: result.updatedRequest,
+        subscription: result.subscription,
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (
+          error.message === "PLAN_CHANGE_REQUEST_NOT_FOUND" ||
+          error.message === "PLAN_CHANGE_ORGANIZATION_NOT_FOUND"
+        ) {
+          response.status(404).json({
+            success: false,
+            message:
+              error.message === "PLAN_CHANGE_REQUEST_NOT_FOUND"
+                ? "Plan-change request not found."
+                : "The organization associated with this request was not found.",
+          });
+          return;
+        }
+
+        if (error.message === "PLAN_CHANGE_REQUEST_NOT_APPROVED") {
+          response.status(409).json({
+            success: false,
+            message:
+              "Only an approved plan-change request can be applied.",
+          });
+          return;
+        }
+
+        if (error.message === "PLAN_CHANGE_REQUEST_PLAN_INACTIVE") {
+          response.status(409).json({
+            success: false,
+            message:
+              "The requested subscription plan is inactive and cannot be applied.",
+          });
+          return;
+        }
+
+        if (
+          error.message === "PLAN_CHANGE_REQUEST_ALREADY_APPLIED"
+        ) {
+          response.status(409).json({
+            success: false,
+            message:
+              "This request has already been applied or is no longer approved.",
+          });
+          return;
+        }
+      }
+
+      console.error(
+        "Failed to apply subscription plan-change request:",
+        error,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to apply the plan-change request.",
+      });
+    }
+  },
+);
+
 export default router;

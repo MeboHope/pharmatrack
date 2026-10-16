@@ -110,6 +110,10 @@ const ResetPassword = lazy(() =>
   import("./components/ResetPassword.tsx"),
 );
 
+const SubscriptionBilling = lazy(
+  () => import("./components/SubscriptionBilling"),
+);
+
 import type {
   DispenseTransaction,
   Drug,
@@ -795,6 +799,7 @@ export default function App() {
       allowedTabs.push(
         "user-management",
         "audit-logs",
+        "subscription-billing",
       );
     }
 
@@ -1990,6 +1995,15 @@ export default function App() {
                 }
                 onReceiveStockSubmit={
                   handleReceiveStockSubmit
+                }
+              />
+            )}
+
+                      {activeTab === "subscription-billing" &&
+            isAdmin && (
+              <SubscriptionBilling
+                organizationName={
+                  currentUser?.organizationName
                 }
               />
             )}

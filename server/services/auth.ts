@@ -1,26 +1,25 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-
 import { prisma } from "../prisma.js";
-
 import {
   isStrongPassword,
   isValidEmail,
   isEmailDomainConfigured,
 } from "../middleware/security.js";
-
+import {
+  assertUserLimit,
+  lockOrganizationSubscriptionResources,
+} from "./subscriptionLimits.js";
 export {
   isStrongPassword,
   isValidEmail,
   isEmailDomainConfigured,
 };
-
 export type AppRole =
   | "SUPER_ADMIN"
   | "ADMIN"
   | "PHARMACIST"
   | "CLINICIAN";
-
 export interface AuthUser {
   id: string;
   name: string;
@@ -35,7 +34,6 @@ export interface AuthUser {
     | "CLINIC"
     | null;
 }
-
 export interface UserOrganization {
   id: string;
   name: string;
@@ -46,7 +44,6 @@ export interface UserOrganization {
     | "PHARMACIST"
     | "CLINICIAN";
 }
-
 export interface JwtPayload {
   sub: string;
   email: string;
@@ -56,66 +53,50 @@ export interface JwtPayload {
   iat?: number;
   exp?: number;
 }
-
 export interface LoginResult {
   user: AuthUser;
   accessToken: string;
   refreshToken: string;
 }
-
 export interface RegisterResult {
   user: AuthUser;
   verificationCode: string;
 }
-
 export interface PasswordResetRequestResult {
   requested: boolean;
 }
-
 const JWT_SECRET = process.env.JWT_SECRET;
-
 if (!JWT_SECRET) {
   throw new Error(
     "JWT_SECRET is not configured.",
   );
 }
-
 const JWT_SECRET_FINAL =
   JWT_SECRET as string;
-
 const ACCESS_TOKEN_EXPIRES_IN =
   process.env.ACCESS_TOKEN_EXPIRES_IN ||
   "15m";
-
 const REFRESH_TOKEN_EXPIRES_IN =
   process.env.REFRESH_TOKEN_EXPIRES_IN ||
   "7d";
-
 const VERIFICATION_CODE_EXPIRY_MINUTES = 15;
-
 const MAX_VERIFICATION_ATTEMPTS = 5;
-
 const PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = 30;
-
 export const DEFAULT_ORGANIZATION_ID =
   "pharmatrack-default-org";
-
 /* ============================================================
    GENERAL HELPERS
    ============================================================ */
-
 function normalizeEmail(
   email: string,
 ): string {
   return email.trim().toLowerCase();
 }
-
 function generateVerificationCode(): string {
   return crypto
     .randomInt(100000, 1000000)
     .toString();
 }
-
 function hashVerificationCode(
   code: string,
 ): string {
@@ -124,13 +105,11 @@ function hashVerificationCode(
     .update(code)
     .digest("hex");
 }
-
 function generateRefreshToken(): string {
   return crypto
     .randomBytes(64)
     .toString("hex");
 }
-
 function hashRefreshToken(
   token: string,
 ): string {
@@ -139,13 +118,11 @@ function hashRefreshToken(
     .update(token)
     .digest("hex");
 }
-
 function generatePasswordResetToken(): string {
   return crypto
     .randomBytes(32)
     .toString("hex");
 }
-
 function hashPasswordResetToken(
   token: string,
 ): string {
@@ -154,11 +131,9 @@ function hashPasswordResetToken(
     .update(token)
     .digest("hex");
 }
-
 /* ============================================================
    TOKEN EXPIRY
    ============================================================ */
-
 function parseDurationToMilliseconds(
   value: string,
   fallbackMilliseconds: number,
@@ -166,42 +141,33 @@ function parseDurationToMilliseconds(
   const match = value.match(
     /^(\d+)(s|m|h|d)$/,
   );
-
   if (!match) {
     return fallbackMilliseconds;
   }
-
   const amount = Number(match[1]);
-
   if (
     !Number.isFinite(amount) ||
     amount <= 0
   ) {
     return fallbackMilliseconds;
   }
-
   switch (match[2]) {
     case "s":
       return amount * 1000;
-
     case "m":
       return amount * 60 * 1000;
-
     case "h":
       return amount * 60 * 60 * 1000;
-
     case "d":
       return amount *
         24 *
         60 *
         60 *
         1000;
-
     default:
       return fallbackMilliseconds;
   }
 }
-
 function getRefreshTokenExpiryDate(): Date {
   const milliseconds =
     parseDurationToMilliseconds(
@@ -212,28 +178,23 @@ function getRefreshTokenExpiryDate(): Date {
         60 *
         1000,
     );
-
   return new Date(
     Date.now() + milliseconds,
   );
 }
-
 function getAccessTokenExpirySeconds(): number {
   const milliseconds =
     parseDurationToMilliseconds(
       ACCESS_TOKEN_EXPIRES_IN,
       15 * 60 * 1000,
     );
-
   return Math.floor(
     milliseconds / 1000,
   );
 }
-
 /* ============================================================
    PASSWORD HASHING
    ============================================================ */
-
 export function hashPassword(
   password: string,
 ): string {
@@ -241,30 +202,25 @@ export function hashPassword(
     crypto
       .randomBytes(16)
       .toString("hex");
-
   const derivedKey =
     crypto.scryptSync(
       password,
       salt,
       64,
     );
-
   return `${salt}:${derivedKey.toString(
     "hex",
   )}`;
 }
-
 export function verifyPassword(
   password: string,
   storedHash: string,
 ): boolean {
   const [salt, key] =
     storedHash.split(":");
-
   if (!salt || !key) {
     return false;
   }
-
   try {
     const derivedKey =
       crypto.scryptSync(
@@ -272,17 +228,14 @@ export function verifyPassword(
         salt,
         64,
       );
-
     const storedKey =
       Buffer.from(key, "hex");
-
     if (
       storedKey.length !==
       derivedKey.length
     ) {
       return false;
     }
-
     return crypto.timingSafeEqual(
       storedKey,
       derivedKey,
@@ -291,11 +244,9 @@ export function verifyPassword(
     return false;
   }
 }
-
 /* ============================================================
    ORGANIZATION CONTEXT
    ============================================================ */
-
 async function getUserOrganizationContext(
   userId: string,
   organizationId?: string | null,
@@ -316,26 +267,20 @@ async function getUserOrganizationContext(
           },
         },
       );
-
     if (!membership) {
       return null;
     }
-
     return {
       organizationId:
         membership.organizationId,
-
       organizationName:
         membership.organization.name,
-
       organizationType:
         membership.organization.type,
-
       role:
         membership.role as AppRole,
     };
   }
-
   const membership =
     await prisma.organizationMembership.findFirst(
       {
@@ -353,26 +298,20 @@ async function getUserOrganizationContext(
         },
       },
     );
-
   if (!membership) {
     return null;
   }
-
   return {
     organizationId:
       membership.organizationId,
-
     organizationName:
       membership.organization.name,
-
     organizationType:
       membership.organization.type,
-
     role:
       membership.role as AppRole,
   };
 }
-
 async function buildAuthenticatedUser(
   userId: string,
   organizationId?: string | null,
@@ -383,11 +322,9 @@ async function buildAuthenticatedUser(
         id: userId,
       },
     });
-
   if (!user) {
     return null;
   }
-
   if (!user.isVerified) {
     return {
       id: user.id,
@@ -402,7 +339,6 @@ async function buildAuthenticatedUser(
       organizationType: null,
     };
   }
-
   if (user.role === "SUPER_ADMIN") {
     return {
       id: user.id,
@@ -416,17 +352,14 @@ async function buildAuthenticatedUser(
       organizationType: null,
     };
   }
-
   const organization =
     await getUserOrganizationContext(
       user.id,
       organizationId,
     );
-
   if (!organization) {
     return null;
   }
-
   return {
     id: user.id,
     name: user.name,
@@ -442,11 +375,9 @@ async function buildAuthenticatedUser(
       organization.organizationType,
   };
 }
-
 /* ============================================================
    USER ORGANIZATIONS
    ============================================================ */
-
 export async function getUserOrganizations(
   userId: string,
 ): Promise<UserOrganization[]> {
@@ -475,21 +406,16 @@ export async function getUserOrganizations(
         },
       },
     );
-
   return memberships.map(
     (membership) => ({
       id:
         membership.organization.id,
-
       name:
         membership.organization.name,
-
       type:
         membership.organization.type,
-
       status:
         membership.organization.status,
-
       role:
         membership.role as
           | "ADMIN"
@@ -498,11 +424,9 @@ export async function getUserOrganizations(
     }),
   );
 }
-
 /* ============================================================
    ACCESS TOKEN
    ============================================================ */
-
 export function createAccessToken(
   user: AuthUser,
 ): string {
@@ -512,7 +436,6 @@ export function createAccessToken(
     role: user.role,
     type: "access",
   };
-
   if (
     user.role !== "SUPER_ADMIN" &&
     user.organizationId
@@ -520,7 +443,6 @@ export function createAccessToken(
     payload.organizationId =
       user.organizationId;
   }
-
   return jwt.sign(
     payload,
     JWT_SECRET_FINAL,
@@ -530,24 +452,19 @@ export function createAccessToken(
     },
   );
 }
-
 /* ============================================================
    REFRESH TOKEN
    ============================================================ */
-
 async function createRefreshToken(
   userId: string,
   organizationId?: string | null,
 ): Promise<string> {
   const rawToken =
     generateRefreshToken();
-
   const tokenHash =
     hashRefreshToken(rawToken);
-
   const expiresAt =
     getRefreshTokenExpiryDate();
-
   await prisma.refreshToken.create({
     data: {
       id: crypto.randomUUID(),
@@ -558,14 +475,11 @@ async function createRefreshToken(
       expiresAt,
     },
   });
-
   return rawToken;
 }
-
 /* ============================================================
    TOKEN VALIDATION
    ============================================================ */
-
 export function verifyAccessToken(
   token: string,
 ): JwtPayload {
@@ -574,20 +488,17 @@ export function verifyAccessToken(
       token,
       JWT_SECRET_FINAL,
     ) as unknown as JwtPayload;
-
   if (decoded.type !== "access") {
     throw new Error(
       "Invalid access token.",
     );
   }
-
   const allowedRoles: AppRole[] = [
     "SUPER_ADMIN",
     "ADMIN",
     "PHARMACIST",
     "CLINICIAN",
   ];
-
   if (
     !allowedRoles.includes(
       decoded.role,
@@ -597,7 +508,6 @@ export function verifyAccessToken(
       "Invalid role.",
     );
   }
-
   if (
     decoded.role !==
       "SUPER_ADMIN" &&
@@ -607,10 +517,8 @@ export function verifyAccessToken(
       "Organization context is required.",
     );
   }
-
   return decoded;
 }
-
 export function verifyRefreshToken(
   token: string,
 ): JwtPayload {
@@ -619,20 +527,17 @@ export function verifyRefreshToken(
       token,
       JWT_SECRET_FINAL,
     ) as unknown as JwtPayload;
-
   if (decoded.type !== "refresh") {
     throw new Error(
       "Invalid refresh token.",
     );
   }
-
   const allowedRoles: AppRole[] = [
     "SUPER_ADMIN",
     "ADMIN",
     "PHARMACIST",
     "CLINICIAN",
   ];
-
   if (
     !allowedRoles.includes(
       decoded.role,
@@ -642,7 +547,6 @@ export function verifyRefreshToken(
       "Invalid role.",
     );
   }
-
   if (
     decoded.role !==
       "SUPER_ADMIN" &&
@@ -652,14 +556,11 @@ export function verifyRefreshToken(
       "Organization context is required.",
     );
   }
-
   return decoded;
 }
-
 /* ============================================================
    REGISTRATION
    ============================================================ */
-
 export async function registerUser(
   input: {
     name: string;
@@ -671,33 +572,27 @@ export async function registerUser(
 ): Promise<RegisterResult> {
   const name =
     input.name.trim();
-
   const email =
     normalizeEmail(input.email);
-
   if (!name) {
     throw new Error(
       "Name is required.",
     );
   }
-
   if (!isValidEmail(email)) {
     throw new Error(
       "Please enter a valid email address.",
     );
   }
-
   const emailDomainConfigured =
     await isEmailDomainConfigured(
       email,
     );
-
   if (!emailDomainConfigured) {
     throw new Error(
       "This email address cannot be verified because its domain does not appear to accept email. Please use a valid, active email address.",
     );
   }
-
   if (
     !isStrongPassword(
       input.password,
@@ -707,7 +602,6 @@ export async function registerUser(
       "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
-
   if (
     input.role === "ADMIN" ||
     input.role ===
@@ -717,28 +611,23 @@ export async function registerUser(
       "This role cannot be assigned during public registration.",
     );
   }
-
   const existingUser =
     await prisma.user.findUnique({
       where: {
         email,
       },
     });
-
   if (existingUser) {
     throw new Error(
       "An account with this email already exists.",
     );
   }
-
   const verificationCode =
     generateVerificationCode();
-
   const codeHash =
     hashVerificationCode(
       verificationCode,
     );
-
   const expiresAt =
     new Date(
       Date.now() +
@@ -746,44 +635,29 @@ export async function registerUser(
           60 *
           1000,
     );
-
   const passwordHash =
     hashPassword(
       input.password,
     );
-
   const role: AppRole =
     input.role ===
       "CLINICIAN"
       ? "CLINICIAN"
       : "PHARMACIST";
-
   const result =
     await prisma.$transaction(
       async (tx) => {
-        const user =
-          await tx.user.create({
-            data: {
-              id: crypto.randomUUID(),
-              name,
-              email,
-              phone:
-                input.phone?.trim() ||
-                null,
-              role,
-              passwordHash,
-              isVerified: false,
-            },
-          });
+        await lockOrganizationSubscriptionResources(
+          tx,
+          DEFAULT_ORGANIZATION_ID,
+        );
 
         const organization =
-          await tx.organization.findUnique(
-            {
-              where: {
-                id: DEFAULT_ORGANIZATION_ID,
-              },
+          await tx.organization.findUnique({
+            where: {
+              id: DEFAULT_ORGANIZATION_ID,
             },
-          );
+          });
 
         if (!organization) {
           throw new Error(
@@ -791,69 +665,90 @@ export async function registerUser(
           );
         }
 
-        if (
-          organization.status !==
-          "ACTIVE"
-        ) {
+        if (organization.status !== "ACTIVE") {
           throw new Error(
             "The organization is currently unavailable.",
           );
         }
 
-        await tx.organizationMembership.create(
-          {
-            data: {
-              id: crypto.randomUUID(),
-              organizationId:
-                DEFAULT_ORGANIZATION_ID,
-              userId: user.id,
-              role,
-            },
-          },
+        await assertUserLimit(
+          tx,
+          DEFAULT_ORGANIZATION_ID,
         );
 
-        await tx.emailVerification.create(
-          {
-            data: {
-              codeHash,
-              expiresAt,
-              attempts: 0,
+        // Recheck the global email address inside the transaction.
+        const duplicateUser =
+          await tx.user.findUnique({
+            where: {
+              email,
+            },
+            select: {
+              id: true,
+            },
+          });
 
-              user: {
-                connect: {
-                  id: user.id,
-                },
+        if (duplicateUser) {
+          throw new Error(
+            "An account with this email already exists.",
+          );
+        }
+
+        const user =
+          await tx.user.create({
+            data: {
+              id: crypto.randomUUID(),
+              name,
+              email,
+              phone: input.phone?.trim() || null,
+              role,
+              passwordHash,
+              isVerified: false,
+            },
+          });
+
+        await tx.organizationMembership.create({
+          data: {
+            id: crypto.randomUUID(),
+            organizationId: DEFAULT_ORGANIZATION_ID,
+            userId: user.id,
+            role,
+          },
+        });
+
+        await tx.emailVerification.create({
+          data: {
+            codeHash,
+            expiresAt,
+            attempts: 0,
+            user: {
+              connect: {
+                id: user.id,
               },
             },
           },
-        );
+        });
 
         return user;
       },
     );
-
   const user =
     await buildAuthenticatedUser(
       result.id,
       DEFAULT_ORGANIZATION_ID,
     );
-
   if (!user) {
     throw new Error(
       "Unable to build authenticated user.",
     );
   }
-
   return {
     user,
     verificationCode,
   };
 }
-
 /* ============================================================
    EMAIL VERIFICATION
    ============================================================ */
-
 export async function verifyEmail(
   userId: string,
   code: string,
@@ -866,13 +761,11 @@ export async function verifyEmail(
         },
       },
     );
-
   if (!verification) {
     throw new Error(
       "No email verification request found.",
     );
   }
-
   if (
     verification.expiresAt <
     new Date()
@@ -881,7 +774,6 @@ export async function verifyEmail(
       "Verification code has expired.",
     );
   }
-
   if (
     verification.attempts >=
     MAX_VERIFICATION_ATTEMPTS
@@ -890,27 +782,22 @@ export async function verifyEmail(
       "Too many verification attempts.",
     );
   }
-
   const normalizedCode =
     code.trim();
-
   const suppliedHash =
     hashVerificationCode(
       normalizedCode,
     );
-
   const storedHashBuffer =
     Buffer.from(
       verification.codeHash,
       "hex",
     );
-
   const suppliedHashBuffer =
     Buffer.from(
       suppliedHash,
       "hex",
     );
-
   if (
     storedHashBuffer.length !==
     suppliedHashBuffer.length
@@ -919,13 +806,11 @@ export async function verifyEmail(
       "Invalid verification code.",
     );
   }
-
   const hashesMatch =
     crypto.timingSafeEqual(
       suppliedHashBuffer,
       storedHashBuffer,
     );
-
   if (!hashesMatch) {
     await prisma.emailVerification.update(
       {
@@ -939,12 +824,10 @@ export async function verifyEmail(
         },
       },
     );
-
     throw new Error(
       "Invalid verification code.",
     );
   }
-
   await prisma.$transaction([
     prisma.user.update({
       where: {
@@ -954,32 +837,26 @@ export async function verifyEmail(
         isVerified: true,
       },
     }),
-
     prisma.emailVerification.delete({
       where: {
         userId,
       },
     }),
   ]);
-
   const user =
     await buildAuthenticatedUser(
       userId,
     );
-
   if (!user) {
     throw new Error(
       "Unable to load verified user.",
     );
   }
-
   return user;
 }
-
 /* ============================================================
    RESEND VERIFICATION
    ============================================================ */
-
 export async function resendVerificationCode(
   userId: string,
 ): Promise<string> {
@@ -989,27 +866,22 @@ export async function resendVerificationCode(
         id: userId,
       },
     });
-
   if (!user) {
     throw new Error(
       "User not found.",
     );
   }
-
   if (user.isVerified) {
     throw new Error(
       "Email is already verified.",
     );
   }
-
   const verificationCode =
     generateVerificationCode();
-
   const codeHash =
     hashVerificationCode(
       verificationCode,
     );
-
   const expiresAt =
     new Date(
       Date.now() +
@@ -1017,24 +889,20 @@ export async function resendVerificationCode(
           60 *
           1000,
     );
-
   await prisma.emailVerification.upsert(
     {
       where: {
         userId,
       },
-
       update: {
         codeHash,
         expiresAt,
         attempts: 0,
       },
-
       create: {
         codeHash,
         expiresAt,
         attempts: 0,
-
         user: {
           connect: {
             id: userId,
@@ -1043,14 +911,11 @@ export async function resendVerificationCode(
       },
     },
   );
-
   return verificationCode;
 }
-
 /* ============================================================
    LOGIN
    ============================================================ */
-
 export async function loginUser(
   input: {
     email: string;
@@ -1059,14 +924,12 @@ export async function loginUser(
 ): Promise<LoginResult> {
   const email =
     normalizeEmail(input.email);
-
   const user =
     await prisma.user.findUnique({
       where: {
         email,
       },
     });
-
   if (
     !user ||
     !verifyPassword(
@@ -1078,46 +941,38 @@ export async function loginUser(
       "Invalid email or password.",
     );
   }
-
   if (!user.isVerified) {
     throw new Error(
       "Please verify your email before logging in.",
     );
   }
-
   const authenticatedUser =
     await buildAuthenticatedUser(
       user.id,
     );
-
   if (!authenticatedUser) {
     throw new Error(
       "Your account is not assigned to an active organization.",
     );
   }
-
   const accessToken =
     createAccessToken(
       authenticatedUser,
     );
-
   const refreshToken =
     await createRefreshToken(
       user.id,
       authenticatedUser.organizationId,
     );
-
   return {
     user: authenticatedUser,
     accessToken,
     refreshToken,
   };
 }
-
 /* ============================================================
    REFRESH ACCESS TOKEN
    ============================================================ */
-
 export async function refreshAccessToken(
   rawRefreshToken: string,
 ): Promise<{
@@ -1129,7 +984,6 @@ export async function refreshAccessToken(
     hashRefreshToken(
       rawRefreshToken,
     );
-
   const storedToken =
     await prisma.refreshToken.findUnique(
       {
@@ -1141,13 +995,11 @@ export async function refreshAccessToken(
         },
       },
     );
-
   if (!storedToken) {
     throw new Error(
       "Invalid refresh token.",
     );
   }
-
   if (storedToken.revokedAt) {
     if (
       storedToken.replacedByTokenId
@@ -1165,12 +1017,10 @@ export async function refreshAccessToken(
         },
       );
     }
-
     throw new Error(
       "Refresh token has been revoked.",
     );
   }
-
   if (
     storedToken.expiresAt <
     new Date()
@@ -1185,35 +1035,28 @@ export async function refreshAccessToken(
         },
       },
     );
-
     throw new Error(
       "Refresh token has expired.",
     );
   }
-
   const authenticatedUser =
     await buildAuthenticatedUser(
       storedToken.userId,
       storedToken.organizationId,
     );
-
   if (!authenticatedUser) {
     throw new Error(
       "Unable to authenticate user in the selected organization.",
     );
   }
-
   const newRefreshToken =
     generateRefreshToken();
-
   const newRefreshTokenHash =
     hashRefreshToken(
       newRefreshToken,
     );
-
   const newExpiresAt =
     getRefreshTokenExpiryDate();
-
   await prisma.$transaction(
     async (tx) => {
       const replacement =
@@ -1230,7 +1073,6 @@ export async function refreshAccessToken(
               newExpiresAt,
           },
         });
-
       await tx.refreshToken.update({
         where: {
           id: storedToken.id,
@@ -1244,12 +1086,10 @@ export async function refreshAccessToken(
       });
     },
   );
-
   const accessToken =
     createAccessToken(
       authenticatedUser,
     );
-
   return {
     user: authenticatedUser,
     accessToken,
@@ -1257,11 +1097,9 @@ export async function refreshAccessToken(
       newRefreshToken,
   };
 }
-
 /* ============================================================
    ORGANIZATION SWITCHING
    ============================================================ */
-
 export async function switchOrganization(
   userId: string,
   organizationId: string,
@@ -1273,38 +1111,32 @@ export async function switchOrganization(
 }> {
   const normalizedOrganizationId =
     organizationId.trim();
-
   if (!normalizedOrganizationId) {
     throw new Error(
       "Organization ID is required.",
     );
   }
-
   const user =
     await prisma.user.findUnique({
       where: {
         id: userId,
       },
     });
-
   if (!user) {
     throw new Error(
       "User account no longer exists.",
     );
   }
-
   if (user.role === "SUPER_ADMIN") {
     throw new Error(
       "Super Admin accounts do not use organization switching.",
     );
   }
-
   if (!user.isVerified) {
     throw new Error(
       "Email verification is required.",
     );
   }
-
   const membership =
     await prisma.organizationMembership.findFirst(
       {
@@ -1321,36 +1153,29 @@ export async function switchOrganization(
         },
       },
     );
-
   if (!membership) {
     throw new Error(
       "You are not a member of that active organization.",
     );
   }
-
   const authenticatedUser =
     await buildAuthenticatedUser(
       userId,
       membership.organizationId,
     );
-
   if (!authenticatedUser) {
     throw new Error(
       "Unable to load the selected organization.",
     );
   }
-
   const newRefreshToken =
     generateRefreshToken();
-
   const newRefreshTokenHash =
     hashRefreshToken(
       newRefreshToken,
     );
-
   const newExpiresAt =
     getRefreshTokenExpiryDate();
-
   await prisma.$transaction(
     async (tx) => {
       if (currentRefreshToken) {
@@ -1358,7 +1183,6 @@ export async function switchOrganization(
           hashRefreshToken(
             currentRefreshToken,
           );
-
         const currentToken =
           await tx.refreshToken.findUnique(
             {
@@ -1368,13 +1192,11 @@ export async function switchOrganization(
               },
             },
           );
-
         if (!currentToken) {
           throw new Error(
             "Current refresh token is invalid.",
           );
         }
-
         if (
           currentToken.revokedAt
         ) {
@@ -1382,7 +1204,6 @@ export async function switchOrganization(
             "Current refresh token has already been revoked.",
           );
         }
-
         if (
           currentToken.expiresAt <
           new Date()
@@ -1391,7 +1212,6 @@ export async function switchOrganization(
             "Current refresh token has expired.",
           );
         }
-
         const replacement =
           await tx.refreshToken.create(
             {
@@ -1407,12 +1227,10 @@ export async function switchOrganization(
               },
             },
           );
-
         await tx.refreshToken.update({
           where: {
             id: currentToken.id,
           },
-
           data: {
             revokedAt:
               new Date(),
@@ -1420,10 +1238,8 @@ export async function switchOrganization(
               replacement.id,
           },
         });
-
         return;
       }
-
       await tx.refreshToken.create({
         data: {
           id: crypto.randomUUID(),
@@ -1438,12 +1254,10 @@ export async function switchOrganization(
       });
     },
   );
-
   const accessToken =
     createAccessToken(
       authenticatedUser,
     );
-
   return {
     user: authenticatedUser,
     accessToken,
@@ -1451,11 +1265,9 @@ export async function switchOrganization(
       newRefreshToken,
   };
 }
-
 /* ============================================================
    LOGOUT
    ============================================================ */
-
 export async function logoutUser(
   rawRefreshToken: string,
 ): Promise<void> {
@@ -1463,21 +1275,18 @@ export async function logoutUser(
     hashRefreshToken(
       rawRefreshToken,
     );
-
   await prisma.refreshToken.updateMany(
     {
       where: {
         tokenHash,
         revokedAt: null,
       },
-
       data: {
         revokedAt: new Date(),
       },
     },
   );
 }
-
 export async function revokeAllRefreshTokens(
   userId: string,
 ): Promise<void> {
@@ -1487,18 +1296,15 @@ export async function revokeAllRefreshTokens(
         userId,
         revokedAt: null,
       },
-
       data: {
         revokedAt: new Date(),
       },
     },
   );
 }
-
 /* ============================================================
    PASSWORD MANAGEMENT
    ============================================================ */
-
 export async function changePassword(
   userId: string,
   currentPassword: string,
@@ -1513,20 +1319,17 @@ export async function changePassword(
       "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
-
   const user =
     await prisma.user.findUnique({
       where: {
         id: userId,
       },
     });
-
   if (!user) {
     throw new Error(
       "User not found.",
     );
   }
-
   if (
     !verifyPassword(
       currentPassword,
@@ -1537,7 +1340,6 @@ export async function changePassword(
       "Current password is incorrect.",
     );
   }
-
   if (
     verifyPassword(
       newPassword,
@@ -1548,27 +1350,22 @@ export async function changePassword(
       "New password must be different from the current password.",
     );
   }
-
   const passwordHash =
     hashPassword(
       newPassword,
     );
-
   await prisma.user.update({
     where: {
       id: userId,
     },
-
     data: {
       passwordHash,
     },
   });
-
   await revokeAllRefreshTokens(
     userId,
   );
 }
-
 export async function adminResetPassword(
   userId: string,
   newPassword: string,
@@ -1582,42 +1379,34 @@ export async function adminResetPassword(
       "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
-
   const user =
     await prisma.user.findUnique({
       where: {
         id: userId,
       },
     });
-
   if (!user) {
     throw new Error(
       "User not found.",
     );
   }
-
   const passwordHash =
     hashPassword(newPassword);
-
   await prisma.user.update({
     where: {
       id: userId,
     },
-
     data: {
       passwordHash,
     },
   });
-
   await revokeAllRefreshTokens(
     userId,
   );
 }
-
 /* ============================================================
    SELF-SERVICE PASSWORD RESET
    ============================================================ */
-
 /**
  * Creates a password reset token for a verified account.
  *
@@ -1640,7 +1429,6 @@ export async function createPasswordResetToken(
 }> {
   const normalizedEmail =
     normalizeEmail(email);
-
   const user =
     await prisma.user.findUnique({
       where: {
@@ -1653,7 +1441,6 @@ export async function createPasswordResetToken(
         isVerified: true,
       },
     });
-
   /*
    * Never reveal whether an email belongs to
    * an account.
@@ -1663,15 +1450,12 @@ export async function createPasswordResetToken(
       requested: true,
     };
   }
-
   const rawToken =
     generatePasswordResetToken();
-
   const tokenHash =
     hashPasswordResetToken(
       rawToken,
     );
-
   const expiresAt =
     new Date(
       Date.now() +
@@ -1679,7 +1463,6 @@ export async function createPasswordResetToken(
           60 *
           1000,
     );
-
   await prisma.$transaction(
     async (tx) => {
       /*
@@ -1693,7 +1476,6 @@ export async function createPasswordResetToken(
           },
         },
       );
-
       await tx.passwordResetToken.create({
         data: {
           id: crypto.randomUUID(),
@@ -1704,7 +1486,6 @@ export async function createPasswordResetToken(
       });
     },
   );
-
   return {
     requested: true,
     userId: user.id,
@@ -1714,7 +1495,6 @@ export async function createPasswordResetToken(
     expiresAt,
   };
 }
-
 /**
  * Completes a password reset using a one-time
  * password reset token.
@@ -1731,10 +1511,8 @@ export async function resetPassword(
       "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
-
   const token =
     rawToken.trim();
-
   if (
     !/^[a-f0-9]{64}$/i.test(token)
   ) {
@@ -1742,10 +1520,8 @@ export async function resetPassword(
       "Invalid or expired password reset link.",
     );
   }
-
   const tokenHash =
     hashPasswordResetToken(token);
-
   const resetRecord =
     await prisma.passwordResetToken.findUnique(
       {
@@ -1757,19 +1533,16 @@ export async function resetPassword(
         },
       },
     );
-
   if (!resetRecord) {
     throw new Error(
       "Invalid or expired password reset link.",
     );
   }
-
   if (resetRecord.usedAt) {
     throw new Error(
       "This password reset link has already been used.",
     );
   }
-
   if (
     resetRecord.expiresAt <
     new Date()
@@ -1778,10 +1551,8 @@ export async function resetPassword(
       "Invalid or expired password reset link.",
     );
   }
-
   const user =
     resetRecord.user;
-
   if (
     verifyPassword(
       newPassword,
@@ -1792,17 +1563,14 @@ export async function resetPassword(
       "New password must be different from the current password.",
     );
   }
-
   const passwordHash =
     hashPassword(
       newPassword,
     );
-
   let organizationId:
     | string
     | null =
     null;
-
   const result =
     await prisma.$transaction(
       async (tx) => {
@@ -1828,13 +1596,11 @@ export async function resetPassword(
               },
             },
           );
-
         if (claimed.count !== 1) {
           throw new Error(
             "Invalid or expired password reset link.",
           );
         }
-
         const updatedUser =
           await tx.user.update({
             where: {
@@ -1847,7 +1613,6 @@ export async function resetPassword(
               id: true,
             },
           });
-
         /*
          * A password reset invalidates every
          * existing authenticated session.
@@ -1863,7 +1628,6 @@ export async function resetPassword(
             },
           },
         );
-
         /*
          * Remove all remaining reset tokens for
          * this account. The consumed token is
@@ -1877,7 +1641,6 @@ export async function resetPassword(
             },
           },
         );
-
         const membership =
           await tx.organizationMembership.findFirst(
             {
@@ -1892,25 +1655,20 @@ export async function resetPassword(
               },
             },
           );
-
         organizationId =
           membership?.organizationId ??
           null;
-
         return updatedUser;
       },
     );
-
   return {
     userId: result.id,
     organizationId,
   };
 }
-
 /* ============================================================
    AUTHENTICATED USER
    ============================================================ */
-
 export async function getAuthenticatedUser(
   userId: string,
   organizationId?: string | null,
@@ -1920,7 +1678,6 @@ export async function getAuthenticatedUser(
     organizationId,
   );
 }
-
 export async function getUserById(
   userId: string,
 ): Promise<AuthUser | null> {
@@ -1928,7 +1685,6 @@ export async function getUserById(
     userId,
   );
 }
-
 export async function createVerificationCode(
   userId: string,
 ): Promise<string> {
@@ -1936,65 +1692,37 @@ export async function createVerificationCode(
     userId,
   );
 }
-
 export function getAccessTokenLifetimeSeconds(): number {
   return getAccessTokenExpirySeconds();
 }
-
 /* ============================================================
    SERVICE EXPORT
    ============================================================ */
-
 export const authService = {
   registerUser,
-
   verifyEmail,
-
   resendVerificationCode,
-
   createVerificationCode,
-
   login: loginUser,
-
   loginUser,
-
   refreshAccessToken,
-
   switchOrganization,
-
   getUserOrganizations,
-
   logoutUser,
-
   revokeAllRefreshTokens,
-
   changePassword,
-
   adminResetPassword,
-
   createPasswordResetToken,
-
   resetPassword,
-
   getAuthenticatedUser,
-
   getUserById,
-
   createAccessToken,
-
   verifyAccessToken,
-
   verifyRefreshToken,
-
   getAccessTokenLifetimeSeconds,
-
   isStrongPassword,
-
   isValidEmail,
-
   isEmailDomainConfigured,
-
   hashPassword,
-
   verifyPassword,
 };

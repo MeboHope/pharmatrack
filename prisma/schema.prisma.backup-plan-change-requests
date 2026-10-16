@@ -1,0 +1,758 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  type      OrganizationType
+  status    OrganizationStatus @default(ACTIVE)
+  address   String?
+  phone     String?
+  email     String?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  memberships      OrganizationMembership[]
+  invitations      OrganizationInvitation[]
+  drugs            Drug[]
+  products         Product[]
+  drugBatches      DrugBatch[]
+  stockMovements   StockMovement[]
+  patients         Patient[]
+  suppliers        Supplier[]
+  transactions     DispenseTransaction[]
+  stockAdjustments StockAdjustment[]
+  settings         PharmacySettings?
+  auditLogs        AuditLog[]
+  subscriptions    OrganizationSubscription[]
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrganizationMembership {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           UserRole @default(PHARMACIST)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([role])
+}
+
+model OrganizationInvitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  invitedById    String
+  name           String
+  email          String
+  phone          String?
+  role           UserRole
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("OrganizationInvitationSender", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([expiresAt])
+  @@index([acceptedAt])
+  @@index([revokedAt])
+  @@index([invitedById])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  action         String
+  entity         String
+  entityId       String?
+  details        String?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+  userId         String?
+  organizationId String?
+
+  User         User?         @relation(fields: [userId], references: [id])
+  Organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([entity])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model DispenseTransaction {
+  id            String      @id @default(cuid())
+  transactionNo String      @unique
+  date          DateTime    @default(now())
+  patientType   PatientType
+  patientName   String
+  phone         String?
+
+  clinicianName String
+  clinicianId   String?
+
+  prescriptionDate DateTime?
+  diagnosis        String?
+
+  subtotal    Decimal @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal @db.Decimal(12, 2)
+
+  paymentMethod PaymentMethod
+
+  cashTendered Decimal? @db.Decimal(12, 2)
+  changeAmount Decimal? @db.Decimal(12, 2)
+  mpesaCode    String?
+
+  status TransactionStatus @default(COMPLETED)
+
+  createdAt      DateTime @default(now())
+  patientId      String?
+  userId         String?
+  organizationId String
+
+  Patient          Patient?           @relation(fields: [patientId], references: [id])
+  User             User?              @relation("TransactionDispenser", fields: [userId], references: [id], onDelete: SetNull)
+  Clinician        User?              @relation("TransactionClinician", fields: [clinicianId], references: [id], onDelete: SetNull)
+  Organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  PrescriptionItem PrescriptionItem[]
+
+  @@index([date])
+  @@index([patientId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([clinicianId])
+  @@index([userId])
+}
+
+model Drug {
+  id              String     @id @default(cuid())
+  code            String     @unique
+  name            String
+  genericName     String
+  category        String
+  formulation     String
+  batchNo         String
+  manufactureDate DateTime?
+  expiryDate      DateTime
+  qty             Int        @default(0)
+  unit            String
+  buyingPrice     Decimal    @db.Decimal(12, 2)
+  sellingPrice    Decimal    @db.Decimal(12, 2)
+  markupPercent   Decimal    @db.Decimal(8, 2)
+  status          DrugStatus @default(IN_STOCK)
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  organizationId  String
+
+  Organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  PrescriptionItem PrescriptionItem[]
+
+  @@index([organizationId])
+}
+
+model Product {
+  id             String        @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  genericName    String
+  category       String
+  formulation    String
+  unit           String
+  notes          String?
+  status         ProductStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  batches             DrugBatch[]
+  movements           StockMovement[]
+  stockAdjustments    StockAdjustment[]
+  dispenseAllocations DispenseAllocation[]
+  prescriptionItems   PrescriptionItem[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([name])
+  @@index([genericName])
+  @@index([category])
+  @@index([status])
+}
+
+model DrugBatch {
+  id              String          @id @default(cuid())
+  organizationId  String
+  productId       String
+  batchNo         String
+  manufactureDate DateTime?
+  expiryDate      DateTime
+  initialQty      Int             @default(0)
+  qty             Int             @default(0)
+  buyingPrice     Decimal         @db.Decimal(12, 2)
+  sellingPrice    Decimal         @db.Decimal(12, 2)
+  status          DrugBatchStatus @default(ACTIVE)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  product             Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  movements           StockMovement[]
+  stockAdjustments    StockAdjustment[]
+  dispenseAllocations DispenseAllocation[]
+
+  @@unique([organizationId, productId, batchNo])
+  @@index([organizationId])
+  @@index([productId])
+  @@index([batchNo])
+  @@index([expiryDate])
+  @@index([status])
+  @@index([organizationId, expiryDate])
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  organizationId String
+  productId      String
+  batchId        String
+  type           StockMovementType
+  quantityDelta  Int
+  previousQty    Int
+  resultingQty   Int
+  referenceType  String?
+  referenceId    String?
+  reason         String?
+  notes          String?
+  userId         String?
+  createdAt      DateTime          @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch        DrugBatch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+  @@index([userId])
+}
+
+model Patient {
+  id             String         @id @default(cuid())
+  name           String
+  phone          String
+  email          String?
+  age            Int?
+  gender         PatientGender?
+  address        String?
+  allergies      String?
+  totalVisits    Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organizationId String
+
+  Organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  DispenseTransaction DispenseTransaction[]
+
+  @@index([name])
+  @@index([phone])
+  @@index([organizationId])
+}
+
+model PharmacySettings {
+  id                String   @id @default(cuid())
+  pharmacyName      String
+  tagline           String?
+  address           String?
+  phone             String?
+  email             String?
+  currency          String   @default("KES")
+  clinicianName     String?
+  expiryAlertDays   Int      @default(90)
+  reorderAlertLevel Int      @default(10)
+  logoUrl           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  organizationId    String   @unique
+
+  Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+}
+
+model PrescriptionItem {
+  id                  String              @id @default(cuid())
+  drugId              String?
+  drugCode            String
+  drugName            String
+  batchNo             String
+  expiryDate          DateTime
+  availableQty        Int
+  qty                 Int
+  unitPrice           Decimal             @db.Decimal(12, 2)
+  frequency           HealthcareFrequency
+  route               HealthcareRoute
+  duration            Int
+  durationUnit        String
+  specialInstructions String?
+  lineTotal           Decimal             @db.Decimal(12, 2)
+  transactionId       String
+  productId           String?
+  userId              String?
+
+  Drug                Drug?                @relation(fields: [drugId], references: [id])
+  Product             Product?             @relation(fields: [productId], references: [id])
+  DispenseTransaction DispenseTransaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  allocations         DispenseAllocation[]
+  user                User?                @relation("PrescriptionItemDispenser", fields: [userId], references: [id])
+
+  @@index([drugId])
+  @@index([productId])
+  @@index([transactionId])
+}
+
+model DispenseAllocation {
+  id                String   @id @default(cuid())
+  transactionItemId String
+  productId         String
+  batchId           String
+  quantity          Int
+  unitPrice         Decimal  @db.Decimal(12, 2)
+  lineTotal         Decimal  @db.Decimal(12, 2)
+  createdAt         DateTime @default(now())
+
+  transactionItem PrescriptionItem @relation(fields: [transactionItemId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch           DrugBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([transactionItemId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([createdAt])
+}
+
+model StockAdjustment {
+  id   String   @id @default(cuid())
+  date DateTime @default(now())
+
+  /**
+   * Legacy fields retained for historical Drug-based adjustments.
+   */
+  drugId   String?
+  drugName String?
+  batchNo  String?
+
+  /**
+   * Batch-based inventory fields.
+   */
+  productId String?
+  batchId   String?
+
+  previousQty   Int
+  adjustedQty   Int
+  quantityDelta Int?
+
+  type   AdjustmentType
+  reason String
+  notes  String?
+
+  adjustedBy     String
+  createdAt      DateTime @default(now())
+  userId         String?
+  organizationId String
+
+  referenceType String?
+  referenceId   String?
+
+  User         User?        @relation(fields: [userId], references: [id])
+  Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  Product      Product?     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  Batch        DrugBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([date])
+  @@index([drugId])
+  @@index([organizationId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([type])
+  @@index([referenceType, referenceId])
+}
+
+model Supplier {
+  id             String   @id @default(cuid())
+  name           String
+  contactPerson  String
+  phone          String
+  email          String
+  address        String
+  leadTimeDays   Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organizationId String
+
+  Organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  role         UserRole @default(PHARMACIST)
+  passwordHash String
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  AuditLog AuditLog[]
+
+  dispensedTransactions DispenseTransaction[] @relation("TransactionDispenser")
+  clinicianTransactions DispenseTransaction[] @relation("TransactionClinician")
+  prescriptionItems     PrescriptionItem[]    @relation("PrescriptionItemDispenser")
+
+  StockAdjustment    StockAdjustment[]
+  StockMovement      StockMovement[]
+  EmailVerification  EmailVerification?
+  RefreshToken       RefreshToken[]
+  PasswordResetToken PasswordResetToken[]
+
+  memberships     OrganizationMembership[]
+  sentInvitations OrganizationInvitation[] @relation("OrganizationInvitationSender")
+
+  @@index([role])
+}
+
+model EmailVerification {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model RefreshToken {
+  id                String    @id @default(cuid())
+  tokenHash         String    @unique
+  userId            String
+  organizationId    String?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([usedAt])
+}
+
+/**
+ * ============================================================
+ * SAAS SUBSCRIPTION BILLING
+ * ============================================================
+ */
+
+model SubscriptionPlan {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  description String?
+
+  monthlyPrice Decimal @db.Decimal(12, 2)
+  annualPrice  Decimal @db.Decimal(12, 2)
+  currency     String  @default("KES")
+
+  maxUsers               Int?
+  maxProducts            Int?
+  maxLocations           Int?
+  maxMonthlyTransactions Int?
+
+  features Json?
+
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions OrganizationSubscription[]
+
+  @@index([isActive, sortOrder])
+}
+
+model OrganizationSubscription {
+  id             String @id @default(cuid())
+  organizationId String
+  planId         String
+
+  status          SubscriptionStatus @default(PENDING)
+  billingInterval BillingInterval
+
+  // Snapshot of the price accepted when this subscription was created.
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  startedAt          DateTime?
+  trialStartsAt      DateTime?
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  cancelAtPeriodEnd Boolean   @default(false)
+  canceledAt        DateTime?
+  endedAt           DateTime?
+
+  paymentProvider        String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plan         SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments     BillingPayment[]
+
+  @@index([organizationId, status])
+  @@index([planId])
+  @@index([currentPeriodEnd])
+  @@index([providerSubscriptionId])
+}
+
+model BillingPayment {
+  id             String @id @default(cuid())
+  subscriptionId String
+
+  provider String
+  method   BillingPaymentMethod
+  status   BillingPaymentStatus @default(PENDING)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("KES")
+
+  // Generated and enforced by our server for checkout idempotency.
+  idempotencyKey String @unique
+
+  providerReference  String?
+  providerCheckoutId String?
+  receiptNumber      String?
+
+  failureCode    String?
+  failureMessage String?
+
+  // Only sanitized metadata. Never store card numbers or CVV.
+  metadata Json?
+
+  initiatedAt DateTime  @default(now())
+  paidAt      DateTime?
+  failedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  subscription OrganizationSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@index([subscriptionId, status])
+  @@index([provider, providerReference])
+  @@index([providerCheckoutId])
+  @@index([createdAt])
+  @@index([paidAt])
+}
+
+model BillingWebhookEvent {
+  id        String  @id @default(cuid())
+  provider  String
+  eventId   String
+  eventType String?
+
+  // Store only sanitized, non-sensitive provider event data.
+  payload Json?
+
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+  processingError String?
+
+  @@unique([provider, eventId])
+  @@index([processedAt])
+  @@index([receivedAt])
+}
+
+enum OrganizationType {
+  PHARMACY
+  CLINIC
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DrugBatchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StockMovementType {
+  OPENING_BALANCE
+  RECEIPT
+  DISPENSE
+  ADJUSTMENT
+  LOSS_DAMAGE
+  EXPIRY_REMOVAL
+  RETURN_TO_SUPPLIER
+  CUSTOMER_RETURN
+  TRANSFER_IN
+  TRANSFER_OUT
+  REVERSAL
+}
+
+enum AdjustmentType {
+  LOSS_DAMAGE
+  EXPIRY_REMOVAL
+  AUDIT_RECONCILIATION
+  RETURN_TO_SUPPLIER
+}
+
+enum DrugStatus {
+  IN_STOCK
+  LOW_STOCK
+  EXPIRED
+  OUT_OF_STOCK
+}
+
+enum HealthcareFrequency {
+  OD
+  BD_BID
+  TID
+  QID
+  STAT
+  PRN
+  Q4H
+  Q6H
+  Q8H
+  Q12H
+  ON
+}
+
+enum HealthcareRoute {
+  ORAL
+  TOPICAL
+  INTRAVENOUS
+  INTRAMUSCULAR
+  SUBCUTANEOUS
+  INHALATION
+  OPHTHALMIC
+  OTIC
+  RECTAL
+  SUBLINGUAL
+}
+
+enum PatientGender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PatientType {
+  WALK_IN
+  REGISTERED
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+}
+
+enum TransactionStatus {
+  COMPLETED
+  CANCELLED
+  PENDING
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  PHARMACIST
+  CLINICIAN
+}
+
+enum SubscriptionStatus {
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum BillingPaymentMethod {
+  MPESA
+  CARD
+}
+
+enum BillingPaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELED
+  REFUNDED
+}

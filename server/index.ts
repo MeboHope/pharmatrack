@@ -30,6 +30,7 @@ import invitationsRouter from "./routes/invitations.js";
 import { verifyPassword } from "./services/auth.js";
 import billingRouter from "./routes/billing.js";
 import superAdminBillingRouter from "./routes/super-admin-billing.js";
+import intasendWebhookRouter from "./routes/intasend-webhook.js";
 
 const app = express();
 
@@ -147,6 +148,10 @@ app.use(
 );
 app.use("/api/products", productsRouter);
 app.use("/api/inventory", inventoryRouter);
+app.use("/api/billing", billingRouter);
+app.use("/api/super-admin/billing", superAdminBillingRouter);
+app.use("/api/webhooks/intasend", intasendWebhookRouter);
+
 app.use("/api/billing", billingRouter);
 app.use("/api/super-admin/billing", superAdminBillingRouter);
 

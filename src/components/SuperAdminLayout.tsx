@@ -70,6 +70,11 @@ const sectionMeta: Record<
       "Assign subscription plans and manage organization billing status.",
   },
 
+    "plan-change-requests": {
+    title: "Plan Change Requests",
+    description: "Review, approve, reject, and apply subscription plan changes.",
+  },
+
   settings: {
     title: "Platform Settings",
     description:

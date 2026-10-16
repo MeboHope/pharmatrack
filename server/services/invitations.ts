@@ -16,6 +16,7 @@ import {
 } from "./invitationEmail.js";
 import {
   assertUserLimit,
+  lockOrganizationSubscriptionResources,
 } from "./subscriptionLimits.js";
 
 const INVITATION_EXPIRY_HOURS = 72;
@@ -44,7 +45,9 @@ export interface InvitationRecord {
   updatedAt: Date;
 }
 
-function isInvitationRole(role: UserRole | string): role is InvitationRole {
+function isInvitationRole(
+  role: UserRole | string,
+): role is InvitationRole {
   return (
     role === "ADMIN" ||
     role === "PHARMACIST" ||
@@ -116,6 +119,8 @@ export async function createInvitation(
   token: string;
 }> {
   const email = normalizeEmail(input.email);
+  const name = input.name.trim();
+  const phone = input.phone?.trim() || null;
 
   if (!isValidEmail(email)) {
     throw new Error("Please provide a valid email address.");
@@ -127,22 +132,56 @@ export async function createInvitation(
     );
   }
 
-  const existingUser = await prisma.user.findUnique({
-    where: {
-      email,
-    },
-    select: {
-      id: true,
-    },
-  });
+  const token = generateInvitationToken();
+  const tokenHash = hashInvitationToken(token);
+  const expiresAt = getInvitationExpiry();
+  const now = new Date();
 
-  if (existingUser) {
-    const existingMembership =
-      await prisma.organizationMembership.findUnique({
+  const result = await prisma.$transaction(async (tx) => {
+    await lockOrganizationSubscriptionResources(
+      tx,
+      input.organizationId,
+    );
+
+    const existingUser = await tx.user.findUnique({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingUser) {
+      const existingMembership =
+        await tx.organizationMembership.findUnique({
+          where: {
+            organizationId_userId: {
+              organizationId: input.organizationId,
+              userId: existingUser.id,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (existingMembership) {
+        throw new Error(
+          "This user is already a member of the organization.",
+        );
+      }
+    }
+
+    const pendingInvitation =
+      await tx.organizationInvitation.findFirst({
         where: {
-          organizationId_userId: {
-            organizationId: input.organizationId,
-            userId: existingUser.id,
+          organizationId: input.organizationId,
+          email,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: {
+            gt: now,
           },
         },
         select: {
@@ -150,88 +189,68 @@ export async function createInvitation(
         },
       });
 
-    if (existingMembership) {
+    if (pendingInvitation) {
       throw new Error(
-        "This user is already a member of the organization.",
+        "There is already a pending invitation for this email address.",
       );
     }
-  }
 
-  const pendingInvitation =
-    await prisma.organizationInvitation.findFirst({
-      where: {
-        organizationId: input.organizationId,
-        email,
-        acceptedAt: null,
-        revokedAt: null,
-        expiresAt: {
-          gt: new Date(),
-        },
-      },
-    });
-
-  if (pendingInvitation) {
-    throw new Error(
-      "There is already a pending invitation for this email address.",
+    await assertUserLimit(
+      tx,
+      input.organizationId,
+      { now },
     );
-  }
 
-    // Enforce the organization's subscription and user limit.
-  await assertUserLimit(
-    prisma,
-    input.organizationId,
-  );
-
-  const token = generateInvitationToken();
-  const tokenHash = hashInvitationToken(token);
-  const expiresAt = getInvitationExpiry();
-
-  const invitation = await prisma.organizationInvitation.create({
-    data: {
-      id: crypto.randomUUID(),
-      organizationId: input.organizationId,
-      invitedById: input.invitedById,
-      name: input.name.trim(),
-      email,
-      phone: input.phone?.trim() || null,
-      role: input.role,
-      tokenHash,
-      expiresAt,
-    },
-  });
-
-  const organization = await prisma.organization.findUnique({
-    where: {
-      id: input.organizationId,
-    },
-    select: {
-      name: true,
-    },
-  });
-
-  if (!organization) {
-    await prisma.organizationInvitation.delete({
+    const organization = await tx.organization.findUnique({
       where: {
-        id: invitation.id,
+        id: input.organizationId,
+      },
+      select: {
+        name: true,
       },
     });
 
-    throw new Error("Organization not found.");
-  }
+    if (!organization) {
+      throw new Error("Organization not found.");
+    }
 
+    const invitation =
+      await tx.organizationInvitation.create({
+        data: {
+          id: crypto.randomUUID(),
+          organizationId: input.organizationId,
+          invitedById: input.invitedById,
+          name,
+          email,
+          phone,
+          role: input.role,
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+    return {
+      invitation,
+      organizationName: organization.name,
+    };
+  });
+
+  // Send email after the transaction commits.
   try {
     await sendInvitationEmail({
       to: email,
-      recipientName: input.name.trim(),
-      organizationName: organization.name,
+      recipientName: name,
+      organizationName: result.organizationName,
       role: input.role,
       invitationToken: token,
       expiresAt,
     });
   } catch (error) {
+    // Preserve the existing behavior of deleting an invitation
+    // when email delivery fails.
     await prisma.organizationInvitation.delete({
       where: {
-        id: invitation.id,
+        id: result.invitation.id,
       },
     });
 
@@ -239,7 +258,7 @@ export async function createInvitation(
   }
 
   return {
-    invitation: toInvitationRecord(invitation),
+    invitation: toInvitationRecord(result.invitation),
     token,
   };
 }
@@ -313,244 +332,349 @@ export async function acceptInvitation(input: {
 }> {
   const tokenHash = hashInvitationToken(input.token);
 
-  const invitation =
+  const initialInvitation =
     await prisma.organizationInvitation.findUnique({
       where: {
         tokenHash,
       },
     });
 
-  if (!invitation) {
+  if (!initialInvitation) {
     throw new Error("Invitation is invalid or has expired.");
   }
 
-  if (invitation.acceptedAt) {
+  if (initialInvitation.acceptedAt) {
     throw new Error("This invitation has already been accepted.");
   }
 
-  if (invitation.revokedAt) {
+  if (initialInvitation.revokedAt) {
     throw new Error("This invitation has been revoked.");
   }
 
-  if (invitation.expiresAt <= new Date()) {
+  if (initialInvitation.expiresAt <= new Date()) {
     throw new Error("This invitation has expired.");
   }
 
-  if (!isInvitationRole(invitation.role)) {
+  if (!isInvitationRole(initialInvitation.role)) {
     throw new Error("This invitation contains an invalid role.");
   }
 
   if (!isStrongPassword(input.password)) {
     throw new Error(
-      "Password must be 12–128 characters and contain uppercase, lowercase, number, and special character.",
+      "Password must be 12-128 characters and contain uppercase, lowercase, number, and special character.",
     );
   }
 
-    // Check capacity before adding this invited user.
-  // Exclude this invitation because it is the invitation being accepted.
-  await assertUserLimit(
-    prisma,
-    invitation.organizationId,
-    {
-      excludeInvitationId: invitation.id,
-    },
-  );
+  // Hash the password before opening the database transaction.
+  const passwordHash = await hashPassword(input.password);
+  const now = new Date();
 
-  const existingUser = await prisma.user.findUnique({
-    where: {
-      email: invitation.email,
-    },
-    select: {
-      id: true,
-      isVerified: true,
-    },
-  });
+  return prisma.$transaction(async (tx) => {
+    await lockOrganizationSubscriptionResources(
+      tx,
+      initialInvitation.organizationId,
+    );
 
-  if (existingUser) {
-    const existingMembership =
-      await prisma.organizationMembership.findUnique({
+    // Reload and revalidate after acquiring the lock.
+    const invitation =
+      await tx.organizationInvitation.findUnique({
         where: {
-          organizationId_userId: {
-            organizationId: invitation.organizationId,
-            userId: existingUser.id,
+          id: initialInvitation.id,
+        },
+      });
+
+    if (!invitation || invitation.tokenHash !== tokenHash) {
+      throw new Error("Invitation is invalid or has expired.");
+    }
+
+    if (invitation.acceptedAt) {
+      throw new Error("This invitation has already been accepted.");
+    }
+
+    if (invitation.revokedAt) {
+      throw new Error("This invitation has been revoked.");
+    }
+
+    if (invitation.expiresAt <= now) {
+      throw new Error("This invitation has expired.");
+    }
+
+    if (!isInvitationRole(invitation.role)) {
+      throw new Error("This invitation contains an invalid role.");
+    }
+
+    // Exclude the invitation being accepted from pending seat usage.
+    await assertUserLimit(
+      tx,
+      invitation.organizationId,
+      {
+        excludeInvitationId: invitation.id,
+        now,
+      },
+    );
+
+    const existingUser = await tx.user.findUnique({
+      where: {
+        email: invitation.email,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    let userId: string;
+
+    if (existingUser) {
+      const existingMembership =
+        await tx.organizationMembership.findUnique({
+          where: {
+            organizationId_userId: {
+              organizationId: invitation.organizationId,
+              userId: existingUser.id,
+            },
           },
+          select: {
+            id: true,
+          },
+        });
+
+      if (existingMembership) {
+        throw new Error(
+          "This user is already a member of the organization.",
+        );
+      }
+
+      userId = existingUser.id;
+    } else {
+      const createdUser = await tx.user.create({
+        data: {
+          id: crypto.randomUUID(),
+          email: invitation.email,
+          passwordHash,
+          name:
+            input.name?.trim() ||
+            invitation.name.trim(),
+          phone: invitation.phone,
+          role: invitation.role,
+          isVerified: true,
         },
         select: {
           id: true,
         },
       });
 
-    if (existingMembership) {
-      throw new Error(
-        "This user is already a member of the organization.",
-      );
+      userId = createdUser.id;
     }
-
-    await prisma.$transaction([
-      prisma.organizationMembership.create({
-        data: {
-          id: crypto.randomUUID(),
-          organizationId: invitation.organizationId,
-          userId: existingUser.id,
-          role: invitation.role,
-        },
-      }),
-
-      prisma.organizationInvitation.update({
-        where: {
-          id: invitation.id,
-        },
-        data: {
-          acceptedAt: new Date(),
-        },
-      }),
-    ]);
-
-    return {
-      userId: existingUser.id,
-      organizationId: invitation.organizationId,
-    };
-  }
-
-  const passwordHash = await hashPassword(input.password);
-
-  const user = await prisma.$transaction(async (tx) => {
-    const createdUser = await tx.user.create({
-      data: {
-        id: crypto.randomUUID(),
-        email: invitation.email,
-        passwordHash,
-        name:
-          input.name?.trim() ||
-          invitation.name.trim(),
-        phone: invitation.phone,
-        role: invitation.role,
-        isVerified: true,
-      },
-    });
 
     await tx.organizationMembership.create({
       data: {
         id: crypto.randomUUID(),
         organizationId: invitation.organizationId,
-        userId: createdUser.id,
+        userId,
         role: invitation.role,
       },
     });
 
-    await tx.organizationInvitation.update({
-      where: {
-        id: invitation.id,
-      },
-      data: {
-        acceptedAt: new Date(),
-      },
-    });
+    // Conditionally consume the invitation. If it is no longer
+    // available, throw so the user/membership writes roll back.
+    const accepted =
+      await tx.organizationInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          tokenHash,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: {
+            gt: now,
+          },
+        },
+        data: {
+          acceptedAt: now,
+        },
+      });
 
-    return createdUser;
+    if (accepted.count !== 1) {
+      throw new Error(
+        "This invitation is no longer available for acceptance.",
+      );
+    }
+
+    return {
+      userId,
+      organizationId: invitation.organizationId,
+    };
   });
-
-  return {
-    userId: user.id,
-    organizationId: invitation.organizationId,
-  };
 }
 
 export async function resendInvitation(
   invitationId: string,
 ): Promise<void> {
-  const invitation =
+  const initialInvitation =
     await prisma.organizationInvitation.findUnique({
       where: {
         id: invitationId,
       },
     });
 
-  if (!invitation) {
+  if (!initialInvitation) {
     throw new Error("Invitation not found.");
-  }
-
-  if (invitation.acceptedAt) {
-    throw new Error("This invitation has already been accepted.");
-  }
-
-  if (invitation.revokedAt) {
-    throw new Error("This invitation has been revoked.");
   }
 
   const token = generateInvitationToken();
   const tokenHash = hashInvitationToken(token);
   const expiresAt = getInvitationExpiry();
+  const now = new Date();
 
-  const organization = await prisma.organization.findUnique({
-    where: {
-      id: invitation.organizationId,
-    },
-    select: {
-      name: true,
-    },
-  });
+  const result = await prisma.$transaction(async (tx) => {
+    await lockOrganizationSubscriptionResources(
+      tx,
+      initialInvitation.organizationId,
+    );
 
-  if (!organization) {
-    throw new Error("Organization not found.");
-  }
+    const invitation =
+      await tx.organizationInvitation.findUnique({
+        where: {
+          id: invitationId,
+        },
+      });
 
-  if (!isInvitationRole(invitation.role)) {
-    throw new Error("Invalid invitation role.");
-  }
+    if (!invitation) {
+      throw new Error("Invitation not found.");
+    }
 
-  await prisma.organizationInvitation.update({
-    where: {
-      id: invitation.id,
-    },
-    data: {
-      tokenHash,
-      expiresAt,
-    },
-  });
+    if (invitation.acceptedAt) {
+      throw new Error(
+        "This invitation has already been accepted.",
+      );
+    }
 
-  try {
-    await sendInvitationEmail({
-      to: invitation.email,
-      recipientName: invitation.name,
-      organizationName: organization.name,
-      role: invitation.role,
-      invitationToken: token,
-      expiresAt,
+    if (invitation.revokedAt) {
+      throw new Error("This invitation has been revoked.");
+    }
+
+    if (invitation.expiresAt <= now) {
+      throw new Error("This invitation has expired.");
+    }
+
+    if (!isInvitationRole(invitation.role)) {
+      throw new Error("Invalid invitation role.");
+    }
+
+    const organization = await tx.organization.findUnique({
+      where: {
+        id: invitation.organizationId,
+      },
+      select: {
+        name: true,
+      },
     });
-  } catch (error) {
-    throw error;
-  }
+
+    if (!organization) {
+      throw new Error("Organization not found.");
+    }
+
+    const updated =
+      await tx.organizationInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: {
+            gt: now,
+          },
+        },
+        data: {
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+    if (updated.count !== 1) {
+      throw new Error(
+        "This invitation is no longer available for resending.",
+      );
+    }
+
+    return {
+      email: invitation.email,
+      name: invitation.name,
+      role: invitation.role,
+      organizationName: organization.name,
+    };
+  });
+
+  // Send the email after the transaction commits.
+  await sendInvitationEmail({
+    to: result.email,
+    recipientName: result.name,
+    organizationName: result.organizationName,
+    role: result.role,
+    invitationToken: token,
+    expiresAt,
+  });
 }
 
 export async function revokeInvitation(
   invitationId: string,
 ): Promise<void> {
-  const invitation =
+  const initialInvitation =
     await prisma.organizationInvitation.findUnique({
       where: {
         id: invitationId,
       },
     });
 
-  if (!invitation) {
+  if (!initialInvitation) {
     throw new Error("Invitation not found.");
   }
 
-  if (invitation.acceptedAt) {
-    throw new Error("This invitation has already been accepted.");
-  }
+  const now = new Date();
 
-  if (invitation.revokedAt) {
-    throw new Error("This invitation has already been revoked.");
-  }
+  await prisma.$transaction(async (tx) => {
+    await lockOrganizationSubscriptionResources(
+      tx,
+      initialInvitation.organizationId,
+    );
 
-  await prisma.organizationInvitation.update({
-    where: {
-      id: invitationId,
-    },
-    data: {
-      revokedAt: new Date(),
-    },
+    const invitation =
+      await tx.organizationInvitation.findUnique({
+        where: {
+          id: invitationId,
+        },
+      });
+
+    if (!invitation) {
+      throw new Error("Invitation not found.");
+    }
+
+    if (invitation.acceptedAt) {
+      throw new Error(
+        "This invitation has already been accepted.",
+      );
+    }
+
+    if (invitation.revokedAt) {
+      throw new Error(
+        "This invitation has already been revoked.",
+      );
+    }
+
+    const revoked =
+      await tx.organizationInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          acceptedAt: null,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: now,
+        },
+      });
+
+    if (revoked.count !== 1) {
+      throw new Error(
+        "This invitation is no longer available for revocation.",
+      );
+    }
   });
 }

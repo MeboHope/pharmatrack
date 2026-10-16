@@ -1,5 +1,5 @@
 
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { prisma } from "../prisma.js";
 
@@ -153,6 +153,25 @@ export async function getValidSubscription(
   );
 }
 
+/**
+ * Acquires a PostgreSQL transaction-level advisory lock for an organization.
+ *
+ * Every operation that consumes subscription-limited resources must acquire
+ * this same lock inside its write transaction before checking the quota.
+ *
+ * The lock is automatically released when the transaction commits or rolls
+ * back. Calls for the same organization are serialized across API processes.
+ */
+export async function lockOrganizationSubscriptionResources(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${organizationId}, 0)
+    )
+  `;
+}
 /**
  * Returns the period in which monthly dispensing transactions are counted.
  *

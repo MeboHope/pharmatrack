@@ -18,6 +18,11 @@ import {
   isStrongPassword,
   isValidEmail,
 } from "../services/auth.js";
+import {
+  assertUserLimit,
+  lockOrganizationSubscriptionResources,
+  SubscriptionLimitError,
+} from "../services/subscriptionLimits.js";
 
 const router = Router();
 
@@ -233,45 +238,70 @@ router.post(
       const passwordHash =
         await hashPassword(password);
 
-      const user =
-        await prisma.$transaction(
-          async (database) => {
-            const createdUser =
-              await database.user.create({
-                data: {
-                  name: name.trim(),
-                  email: normalizedEmail,
-                  phone:
-                    typeof phone === "string" &&
-                    phone.trim()
-                      ? phone.trim()
-                      : null,
+      const user = await prisma.$transaction(
+  async (database) => {
+    // Serialize subscription-quota checks and writes
+    // for this organization.
+    await lockOrganizationSubscriptionResources(
+      database,
+      organizationId,
+    );
 
-                  /*
-                   * User.role is retained for compatibility
-                   * with the existing schema and authentication
-                   * flow.
-                   *
-                   * For organization-level authorization,
-                   * OrganizationMembership.role is authoritative.
-                   */
-                  role,
-                  isVerified: true,
-                  passwordHash,
-                },
-              });
+    // Count existing members and applicable pending
+    // invitations before consuming another seat.
+    await assertUserLimit(
+      database,
+      organizationId,
+    );
 
-            await database.organizationMembership.create({
-              data: {
-                organizationId,
-                userId: createdUser.id,
-                role,
-              },
-            });
+    // Recheck the email inside the transaction so
+    // concurrent requests cannot bypass the earlier check.
+    const existingUser =
+      await database.user.findUnique({
+        where: {
+          email: normalizedEmail,
+        },
+      });
 
-            return createdUser;
-          },
-        );
+    if (existingUser) {
+      const error = new Error(
+        "An account with this email already exists.",
+      );
+
+      Object.assign(error, {
+        status: 409,
+        code: "USER_ALREADY_EXISTS",
+      });
+
+      throw error;
+    }
+
+    const createdUser =
+      await database.user.create({
+        data: {
+          name: name.trim(),
+          email: normalizedEmail,
+          phone:
+            typeof phone === "string" && phone.trim()
+              ? phone.trim()
+              : null,
+          role,
+          isVerified: true,
+          passwordHash,
+        },
+      });
+
+    await database.organizationMembership.create({
+      data: {
+        organizationId,
+        userId: createdUser.id,
+        role,
+      },
+    });
+
+    return createdUser;
+  },
+);
 
       await recordAudit(request, {
         action: "USER_CREATED",
@@ -294,9 +324,32 @@ router.post(
           role,
         }),
       });
-    } catch (error) {
-      next(error);
-    }
+   } catch (error) {
+  if (error instanceof SubscriptionLimitError) {
+    response.status(error.statusCode).json({
+      success: false,
+      code: error.code,
+      message: error.message,
+    });
+    return;
+  }
+
+  const candidate = error as {
+    status?: number;
+    code?: string;
+    message?: string;
+  };
+
+  if (candidate.code === "USER_ALREADY_EXISTS") {
+    response.status(409).json({
+      success: false,
+      message: candidate.message,
+    });
+    return;
+  }
+
+  next(error);
+}
   },
 );
 

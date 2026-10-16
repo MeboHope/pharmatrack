@@ -1,4 +1,4 @@
-import { api } from "./api";
+﻿import { api } from "./api";
 
 export type OrganizationType =
   | "PHARMACY"
@@ -59,6 +59,65 @@ export interface SubscriptionPlanInput {
    ============================================================ */
 
 export type BillingInterval = "MONTHLY" | "ANNUAL";
+
+export type SubscriptionChangeRequestStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "APPLIED";
+
+export type SubscriptionChangeDecision =
+  | "APPROVE"
+  | "REJECT";
+
+export interface SubscriptionChangeRequest {
+  id: string;
+  organizationId: string;
+  requestedById: string;
+  requestedPlanId: string;
+  requestedInterval: BillingInterval;
+  status: SubscriptionChangeRequestStatus;
+  requestReason: string | null;
+  reviewedById: string | null;
+  reviewedAt: string | null;
+  decisionReason: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+
+  organization: {
+    id: string;
+    name: string;
+    type: OrganizationType;
+    status: OrganizationStatus;
+  };
+
+  requestedBy: {
+    id: string;
+    name: string;
+    email: string;
+  };
+
+  reviewedBy: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+
+  requestedPlan: {
+    id: string;
+    code: string;
+    name: string;
+    monthlyPrice: number | string;
+    annualPrice: number | string;
+    currency: string;
+  };
+}
+
+export interface ReviewSubscriptionChangeInput {
+  decision: SubscriptionChangeDecision;
+  reason?: string;
+}
 
 export type SubscriptionStatus =
   | "PENDING"
@@ -1415,6 +1474,76 @@ export const superAdminService = {
     }
 
     return subscription;
+  },
+
+    /* ==========================================================
+     SUBSCRIPTION PLAN-CHANGE REQUESTS
+     ========================================================== */
+
+  async getSubscriptionChangeRequests(
+    status?: SubscriptionChangeRequestStatus,
+  ): Promise<SubscriptionChangeRequest[]> {
+    const query = status
+      ? `?status=${encodeURIComponent(status)}`
+      : "";
+
+    const response =
+      await api.get<SubscriptionChangeRequest[]>(
+        `/super-admin/billing/plan-change-requests${query}`,
+      ) as unknown as {
+        data?: SubscriptionChangeRequest[];
+        requests?: SubscriptionChangeRequest[];
+      };
+
+    return response.data ?? response.requests ?? [];
+  },
+
+  async reviewSubscriptionChangeRequest(
+    requestId: string,
+    input: ReviewSubscriptionChangeInput,
+  ): Promise<SubscriptionChangeRequest> {
+    const response =
+      await api.patch<SubscriptionChangeRequest>(
+        `/super-admin/billing/plan-change-requests/${encodeURIComponent(requestId)}/review`,
+        input,
+      ) as unknown as {
+        data?: SubscriptionChangeRequest;
+        request?: SubscriptionChangeRequest;
+      };
+
+    const reviewedRequest =
+      response.data ?? response.request;
+
+    if (!reviewedRequest) {
+      throw new Error(
+        "The server did not return the reviewed plan-change request.",
+      );
+    }
+
+    return reviewedRequest;
+  },
+    async applySubscriptionChangeRequest(
+    requestId: string,
+  ): Promise<SubscriptionChangeRequest> {
+    const response = await api.post<SubscriptionChangeRequest>(
+      `/super-admin/billing/plan-change-requests/${encodeURIComponent(requestId)}/apply`,
+      {
+        confirmManualActivation: true,
+      },
+    ) as unknown as {
+      data?: SubscriptionChangeRequest;
+      request?: SubscriptionChangeRequest;
+    };
+
+    const appliedRequest = response.data ?? response.request;
+
+    if (!appliedRequest) {
+      throw new Error(
+        "The server did not return the applied plan-change request.",
+      );
+    }
+
+    return appliedRequest;
   },
 
   /* ==========================================================
