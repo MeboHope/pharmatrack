@@ -152,9 +152,6 @@ app.use("/api/billing", billingRouter);
 app.use("/api/super-admin/billing", superAdminBillingRouter);
 app.use("/api/webhooks/intasend", intasendWebhookRouter);
 
-app.use("/api/billing", billingRouter);
-app.use("/api/super-admin/billing", superAdminBillingRouter);
-
 /* ============================================================
    API ROOT
    ============================================================ */

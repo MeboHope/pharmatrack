@@ -446,67 +446,80 @@ const [billingError, setBillingError] =
   useEffect(() => {
     void loadBillingData();
   }, [loadBillingData]);
-  useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  const paymentId = params.get("billing_payment");
+    useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentId = params.get("billing_payment");
 
-  if (!paymentId) {
-    return;
-  }
-
-  let cancelled = false;
-
-  const verifyReturnedPayment = async () => {
-    setBillingError(null);
-    setBillingMessage("Verifying your payment with the payment provider...");
-
-    try {
-      const result = await verifyBillingPayment(paymentId);
-
-      if (cancelled) {
-        return;
-      }
-
-      if (result.status === "SUCCEEDED") {
-        setBillingMessage(
-          "Payment verified successfully. Your subscription details are being refreshed.",
-        );
-      } else {
-        setBillingMessage(
-          `Payment status: ${result.status}. If your payment is still processing, refresh this page shortly.`,
-        );
-      }
-
-      await loadBillingData(true);
-    } catch (error: unknown) {
-      if (!cancelled) {
-        setBillingError(
-          error instanceof Error
-            ? error.message
-            : "Payment verification failed. Refresh and try again.",
-        );
-      }
-    } finally {
-      if (!cancelled) {
-        params.delete("billing_payment");
-
-        const query = params.toString();
-        const cleanUrl =
-          window.location.pathname +
-          (query ? `?${query}` : "") +
-          window.location.hash;
-
-        window.history.replaceState({}, "", cleanUrl);
-      }
+    if (!paymentId) {
+      return;
     }
-  };
 
-  void verifyReturnedPayment();
+    let cancelled = false;
+    let verificationSucceeded = false;
 
-  return () => {
-    cancelled = true;
-  };
-}, [loadBillingData]);
+    const verifyReturnedPayment = async () => {
+      setBillingError(null);
+      setBillingMessage("Verifying your payment with the payment provider...");
+
+      try {
+        const result = await verifyBillingPayment(paymentId);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (result.status === "SUCCEEDED") {
+          verificationSucceeded = true;
+
+          setBillingMessage(
+            "Payment verified successfully. Your subscription details are being refreshed.",
+          );
+        } else {
+          setBillingMessage(
+            `Payment status: ${result.status}. If your payment is still processing, refresh this page shortly.`,
+          );
+        }
+
+        try {
+          await loadBillingData(true);
+        } catch {
+          if (!cancelled) {
+            setBillingError(
+              verificationSucceeded
+                ? "Payment was verified, but billing details could not be refreshed. Refresh the page to try again."
+                : "Payment status was retrieved, but billing details could not be refreshed. Refresh the page to try again.",
+            );
+          }
+        }
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setBillingError(
+            error instanceof Error
+              ? error.message
+              : "Payment verification failed. Refresh and try again.",
+          );
+        }
+      } finally {
+        if (!cancelled && verificationSucceeded) {
+          params.delete("billing_payment");
+
+          const query = params.toString();
+          const cleanUrl =
+            window.location.pathname +
+            (query ? `?${query}` : "") +
+            window.location.hash;
+
+          window.history.replaceState({}, "", cleanUrl);
+        }
+      }
+    };
+
+    void verifyReturnedPayment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadBillingData]);
 
   const currentPlan = subscription?.plan;
   const usageHasSubscription = Boolean(usage?.subscription.id);
