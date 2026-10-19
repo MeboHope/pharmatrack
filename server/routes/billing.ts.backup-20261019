@@ -1,0 +1,1256 @@
+import express from "express";
+
+import { prisma } from "../prisma.js";
+import auditService from "../services/audit.js";
+
+import {
+  authenticate,
+  requireOrganizationContext,
+  requireRole,
+} from "../middleware/auth.js";
+import { randomUUID } from "node:crypto";
+import { createIntaSendCheckout } from "../services/intasend.js";
+import {
+  activateVerifiedIntaSendPayment,
+  BillingPaymentActivationError,
+} from "../services/billingPaymentActivation.js";
+
+import { verifyIntaSendStatus } from "../services/intasendStatus.js";
+
+const router = express.Router();
+
+/*
+ * Billing information and plan-change requests are restricted
+ * to organization ADMINs.
+ *
+ * Organization context is derived from verified membership.
+ */
+router.use(authenticate);
+router.use(requireOrganizationContext);
+router.use(requireRole("ADMIN"));
+
+const planChangeRequestSelect = {
+  id: true,
+  organizationId: true,
+  requestedById: true,
+  requestedPlanId: true,
+  requestedInterval: true,
+  status: true,
+  requestReason: true,
+  reviewedById: true,
+  reviewedAt: true,
+  decisionReason: true,
+  appliedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  requestedPlan: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      description: true,
+      monthlyPrice: true,
+      annualPrice: true,
+      currency: true,
+    },
+  },
+} as const;
+
+/* ============================================================
+   GET /api/billing/plans
+   ============================================================ */
+
+router.get("/plans", async (_request, response) => {
+  try {
+    const plans = await prisma.subscriptionPlan.findMany({
+      where: { isActive: true },
+      orderBy: [
+        { sortOrder: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        monthlyPrice: true,
+        annualPrice: true,
+        currency: true,
+        maxUsers: true,
+        maxProducts: true,
+        maxLocations: true,
+        maxMonthlyTransactions: true,
+        features: true,
+      },
+    });
+
+    response.json({
+      success: true,
+      data: plans,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch available subscription plans:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch available subscription plans.",
+    });
+  }
+});
+
+/* ============================================================
+   POST /api/billing/plan-change-requests
+
+   Creates a request only. It does not change the subscription
+   or initiate/confirm a payment.
+   ============================================================ */
+
+router.post("/plan-change-requests", async (request, response) => {
+  try {
+    const organizationId = request.auth?.organizationId;
+    const requestedById = request.auth?.sub;
+
+    if (!organizationId || !requestedById) {
+      response.status(403).json({
+        success: false,
+        message: "Authenticated organization context is required.",
+      });
+      return;
+    }
+
+    const body = request.body as {
+      planId?: unknown;
+      billingInterval?: unknown;
+      requestReason?: unknown;
+    };
+
+    const planId =
+      typeof body.planId === "string"
+        ? body.planId.trim()
+        : "";
+
+    const billingInterval = body.billingInterval;
+
+    const requestReason =
+      typeof body.requestReason === "string"
+        ? body.requestReason.trim()
+        : "";
+
+    if (!planId) {
+      response.status(400).json({
+        success: false,
+        message: "A subscription plan is required.",
+      });
+      return;
+    }
+
+    if (
+      billingInterval !== "MONTHLY" &&
+      billingInterval !== "ANNUAL"
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Billing interval must be MONTHLY or ANNUAL.",
+      });
+      return;
+    }
+
+    if (requestReason.length > 1000) {
+      response.status(400).json({
+        success: false,
+        message: "The request reason cannot exceed 1000 characters.",
+      });
+      return;
+    }
+
+
+    /*
+     * Lock the organization row while checking for a pending
+     * request. This serializes concurrent request submissions
+     * for the same organization.
+     *
+     * The organization ID comes only from verified auth context.
+     */
+    const createdRequest = await prisma.$transaction(
+      async (tx) => {
+        const organizations = await tx.$queryRaw<
+          Array<{ id: string }>
+        >`
+          SELECT "id"
+          FROM "Organization"
+          WHERE "id" = ${organizationId}
+          FOR UPDATE
+        `;
+
+        if (organizations.length === 0) {
+          throw new Error("ORGANIZATION_NOT_FOUND");
+        }
+
+        const plan = await tx.subscriptionPlan.findFirst({
+          where: {
+            id: planId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            monthlyPrice: true,
+            annualPrice: true,
+            currency: true,
+          },
+        });
+
+        if (!plan) {
+          throw new Error("PLAN_NOT_AVAILABLE");
+        }
+
+        const pendingRequest =
+          await tx.subscriptionChangeRequest.findFirst({
+            where: {
+              organizationId,
+              status: "PENDING",
+            },
+            select: { id: true },
+          });
+
+        if (pendingRequest) {
+          throw new Error("PENDING_REQUEST_EXISTS");
+        }
+
+        /*
+         * Do not create a redundant request for the same plan
+         * and billing interval if that is already the latest
+         * subscription configuration.
+         *
+         * Pending or inactive subscriptions are not treated as
+         * active entitlements here.
+         */
+        const currentSubscription =
+          await tx.organizationSubscription.findFirst({
+            where: {
+              organizationId,
+              status: {
+                in: ["ACTIVE", "TRIALING"],
+              },
+              endedAt: null,
+            },
+            orderBy: [
+              { createdAt: "desc" },
+              { id: "desc" },
+            ],
+            select: {
+              planId: true,
+              billingInterval: true,
+            },
+          });
+
+        if (
+          currentSubscription?.planId === plan.id &&
+          currentSubscription.billingInterval === billingInterval
+        ) {
+          throw new Error("PLAN_ALREADY_CURRENT");
+        }
+
+        return tx.subscriptionChangeRequest.create({
+          data: {
+            organizationId,
+            requestedById,
+            requestedPlanId: plan.id,
+            requestedInterval: billingInterval,
+            requestReason: requestReason || null,
+          },
+          select: planChangeRequestSelect,
+        });
+      },
+      {
+        maxWait: 5000,
+        timeout: 10000,
+      },
+    );
+
+    await auditService.log({
+      action: "SUBSCRIPTION_CHANGE_REQUESTED",
+      entity: "SubscriptionChangeRequest",
+      entityId: createdRequest.id,
+      details: JSON.stringify({
+        requestedPlanId: createdRequest.requestedPlanId,
+        requestedPlanCode: createdRequest.requestedPlan.code,
+        requestedInterval: createdRequest.requestedInterval,
+        status: createdRequest.status,
+      }),
+      userId: requestedById,
+      ipAddress: request.ip,
+      organizationId,
+    });
+
+    response.status(201).json({
+      success: true,
+      message:
+        "Plan-change request submitted. Your current subscription has not been changed.",
+      data: createdRequest,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "ORGANIZATION_NOT_FOUND") {
+        response.status(403).json({
+          success: false,
+          message: "The authenticated organization could not be found.",
+        });
+        return;
+      }
+
+      if (error.message === "PLAN_NOT_AVAILABLE") {
+        response.status(400).json({
+          success: false,
+          message: "The selected subscription plan is unavailable.",
+        });
+        return;
+      }
+
+      if (error.message === "PENDING_REQUEST_EXISTS") {
+        response.status(409).json({
+          success: false,
+          message:
+            "Your organization already has a pending plan-change request.",
+        });
+        return;
+      }
+
+      if (error.message === "PLAN_ALREADY_CURRENT") {
+        response.status(409).json({
+          success: false,
+          message:
+            "Your organization already has this plan and billing interval.",
+        });
+        return;
+      }
+    }
+
+    console.error(
+      "Failed to submit subscription change request:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to submit the plan-change request.",
+    });
+  }
+});
+router.post(
+  "/plan-change-requests/:id/checkout",
+  async (request, response) => {
+    const organizationId = request.auth?.organizationId;
+    const userId = request.auth?.sub;
+    const requestId = request.params.id;
+    const method = request.body?.method;
+
+    if (!organizationId || !userId) {
+      return response.status(401).json({
+        success: false,
+        message: "Authentication and organization context are required.",
+      });
+    }
+
+    if (method !== "MPESA" && method !== "CARD") {
+      return response.status(400).json({
+        success: false,
+        message: "Choose MPESA or CARD as the payment method.",
+      });
+    }
+
+    let paymentId: string | undefined;
+
+    try {
+      const configuredAppUrl = process.env.APP_URL?.trim();
+
+      if (!configuredAppUrl) {
+        throw new Error("APP_URL is not configured.");
+      }
+
+      let appUrl: URL;
+
+      try {
+        appUrl = new URL(configuredAppUrl);
+      } catch {
+        throw new Error("APP_URL must be a valid absolute URL.");
+      }
+
+      if (
+        !["https:", "http:"].includes(appUrl.protocol) ||
+        (process.env.NODE_ENV === "production" &&
+          appUrl.protocol !== "https:") ||
+        appUrl.username ||
+        appUrl.password
+      ) {
+        throw new Error(
+          "APP_URL must be a trusted HTTPS application URL in production.",
+        );
+      }
+
+      /*
+       * Create the payment record before calling IntaSend.
+       * The organization lock prevents concurrent checkout attempts
+       * from creating multiple active attempts for the same request.
+       */
+      const checkoutPreparation = await prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "Organization"
+            WHERE "id" = ${organizationId}
+            FOR UPDATE
+          `;
+
+          const changeRequest =
+            await tx.subscriptionChangeRequest.findFirst({
+              where: {
+                id: requestId,
+                organizationId,
+              },
+              include: {
+                requestedPlan: true,
+              },
+            });
+
+          if (!changeRequest) {
+            throw new Error(
+              "The plan-change request was not found.",
+            );
+          }
+
+          if (changeRequest.status !== "APPROVED") {
+            throw new Error(
+              "Only approved plan-change requests can proceed to checkout.",
+            );
+          }
+
+          if (changeRequest.appliedAt) {
+            throw new Error(
+              "This plan-change request has already been applied.",
+            );
+          }
+
+          if (!changeRequest.requestedPlan.isActive) {
+            throw new Error(
+              "The requested subscription plan is no longer active.",
+            );
+          }
+
+          const plan = changeRequest.requestedPlan;
+
+          const amount =
+            changeRequest.requestedInterval === "MONTHLY"
+              ? plan.monthlyPrice
+              : plan.annualPrice;
+
+          if (Number(amount.toString()) <= 0) {
+            throw new Error(
+              "This plan does not have a payable price for the selected interval.",
+            );
+          }
+
+          const user = await tx.user.findUnique({
+            where: { id: userId },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+            },
+          });
+
+          if (!user?.email?.trim()) {
+            throw new Error(
+              "Add a valid email address to your account before checkout.",
+            );
+          }
+
+          const existingPayment =
+            await tx.billingPayment.findFirst({
+              where: {
+                subscriptionChangeRequestId: changeRequest.id,
+                provider: "INTASEND",
+                status: {
+                  in: ["PENDING", "PROCESSING"],
+                },
+              },
+              orderBy: {
+                createdAt: "desc",
+              },
+            });
+
+          if (existingPayment) {
+            const metadata = existingPayment.metadata as
+              | { checkoutUrl?: unknown }
+              | null;
+
+            const checkoutUrl =
+              typeof metadata?.checkoutUrl === "string"
+                ? metadata.checkoutUrl
+                : null;
+
+            return {
+              kind: "existing" as const,
+              paymentId: existingPayment.id,
+              checkoutUrl,
+            };
+          }
+
+          const payment = await tx.billingPayment.create({
+            data: {
+              subscriptionChangeRequestId: changeRequest.id,
+              provider: "INTASEND",
+              method,
+              status: "PENDING",
+              amount,
+              currency: plan.currency,
+              idempotencyKey: `intasend:${changeRequest.id}:${randomUUID()}`,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          return {
+            kind: "created" as const,
+            paymentId: payment.id,
+            amount: amount.toString(),
+            currency: plan.currency,
+            email: user.email.trim(),
+            name: user.name.trim(),
+            phone: user.phone,
+          };
+        },
+        {
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      );
+
+      paymentId = checkoutPreparation.paymentId;
+
+      if (checkoutPreparation.kind === "existing") {
+        if (checkoutPreparation.checkoutUrl) {
+          return response.json({
+            success: true,
+            data: {
+              paymentId: checkoutPreparation.paymentId,
+              checkoutUrl: checkoutPreparation.checkoutUrl,
+              status: "PENDING",
+            },
+          });
+        }
+
+        return response.status(409).json({
+          success: false,
+          message:
+            "A checkout attempt is already being prepared. Check payment history before trying again.",
+        });
+      }
+
+      const nameParts = checkoutPreparation.name
+        .trim()
+        .split(/\s+/);
+
+      const firstName = nameParts.shift() || "PharmaTrack";
+      const lastName = nameParts.join(" ") || "Customer";
+
+      const redirectUrl = new URL(appUrl.toString());
+      redirectUrl.searchParams.set(
+        "billing_payment",
+        checkoutPreparation.paymentId,
+      );
+
+      const checkout = await createIntaSendCheckout({
+        amount: checkoutPreparation.amount,
+        currency: checkoutPreparation.currency,
+        email: checkoutPreparation.email,
+        firstName,
+        lastName,
+        phoneNumber:
+          checkoutPreparation.phone?.trim() || undefined,
+        apiRef: checkoutPreparation.paymentId,
+        redirectUrl: redirectUrl.toString(),
+      });
+
+      /*
+       * Persist the checkout identifier and hosted URL so retries
+       * can reuse the same pending checkout instead of creating
+       * duplicate provider sessions.
+       */
+      await prisma.billingPayment.update({
+        where: {
+          id: checkoutPreparation.paymentId,
+        },
+        data: {
+          providerCheckoutId: checkout.id,
+          metadata: {
+            checkoutUrl: checkout.url,
+          },
+        },
+      });
+
+      await auditService.log({
+        action: "BILLING_CHECKOUT_CREATED",
+        entity: "BillingPayment",
+        entityId: checkoutPreparation.paymentId,
+        userId,
+        ipAddress: request.ip,
+        details: JSON.stringify({
+          organizationId,
+          requestId,
+          method,
+          provider: "INTASEND",
+          currency: checkoutPreparation.currency,
+        }),
+      });
+
+      return response.json({
+        success: true,
+        data: {
+          paymentId: checkoutPreparation.paymentId,
+          checkoutUrl: checkout.url,
+          status: "PENDING",
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to start the payment checkout.";
+
+      /*
+       * Only mark this attempt failed if we know it failed before
+       * successful checkout creation. A later verification/webhook
+       * handler will handle provider-confirmed payment results.
+       */
+      if (
+        paymentId &&
+        !message.toLowerCase().includes("already being prepared")
+      ) {
+        try {
+          await prisma.billingPayment.updateMany({
+            where: {
+              id: paymentId,
+              provider: "INTASEND",
+              status: "PENDING",
+              providerCheckoutId: null,
+            },
+            data: {
+              status: "FAILED",
+              failedAt: new Date(),
+              failureCode: "CHECKOUT_CREATION_FAILED",
+              failureMessage: message.slice(0, 500),
+            },
+          });
+        } catch (updateError) {
+          console.error(
+            "Failed to update the IntaSend checkout record:",
+            updateError,
+          );
+        }
+      }
+
+      const clientErrorMessages = [
+        "The plan-change request was not found.",
+        "Only approved plan-change requests can proceed to checkout.",
+        "This plan-change request has already been applied.",
+        "The requested subscription plan is no longer active.",
+        "This plan does not have a payable price for the selected interval.",
+        "Add a valid email address to your account before checkout.",
+      ];
+
+      const isClientError =
+        clientErrorMessages.includes(message);
+
+      if (!isClientError) {
+        console.error("IntaSend checkout creation failed:", error);
+      }
+
+      return response.status(
+        isClientError ? 400 : 502,
+      ).json({
+        success: false,
+        message: isClientError
+          ? message
+          : "Unable to start checkout. Please check payment history before retrying.",
+      });
+    }
+  },
+);
+
+/* ============================================================
+   GET /api/billing/plan-change-requests
+
+   Returns history for the authenticated organization only.
+   ============================================================ */
+
+router.get("/plan-change-requests", async (request, response) => {
+  try {
+    const organizationId = request.auth?.organizationId;
+
+    if (!organizationId) {
+      response.status(403).json({
+        success: false,
+        message: "Organization context is required.",
+      });
+      return;
+    }
+
+    const requests =
+      await prisma.subscriptionChangeRequest.findMany({
+        where: { organizationId },
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        select: {
+          ...planChangeRequestSelect,
+          requestedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          reviewedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+    response.json({
+      success: true,
+      data: requests,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch plan-change request history:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch plan-change request history.",
+    });
+  }
+});
+
+/* ============================================================
+   GET /api/billing/subscription
+   ============================================================ */
+
+router.get("/subscription", async (request, response) => {
+  try {
+    const organizationId = request.auth?.organizationId;
+
+    if (!organizationId) {
+      response.status(403).json({
+        success: false,
+        message: "Organization context is required.",
+      });
+      return;
+    }
+
+    const subscription =
+      await prisma.organizationSubscription.findFirst({
+        where: { organizationId },
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        select: {
+          id: true,
+          status: true,
+          billingInterval: true,
+          amount: true,
+          currency: true,
+          startedAt: true,
+          trialStartsAt: true,
+          trialEndsAt: true,
+          currentPeriodStart: true,
+          currentPeriodEnd: true,
+          cancelAtPeriodEnd: true,
+          canceledAt: true,
+          endedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          plan: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              description: true,
+              maxUsers: true,
+              maxProducts: true,
+              maxLocations: true,
+              maxMonthlyTransactions: true,
+              features: true,
+            },
+          },
+        },
+      });
+
+    response.json({
+      success: true,
+      data: subscription,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch organization subscription:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch organization subscription.",
+    });
+  }
+});
+
+/* ============================================================
+   GET /api/billing/usage
+   ============================================================ */
+
+router.get("/usage", async (request, response) => {
+  try {
+    const organizationId = request.auth?.organizationId;
+
+    if (!organizationId) {
+      response.status(403).json({
+        success: false,
+        message: "Organization context is required.",
+      });
+      return;
+    }
+
+    const now = new Date();
+
+    /*
+     * Match the subscription-selection policy used by the
+     * subscription-limit service: the latest subscription wins.
+     * An older ACTIVE subscription must not override a newer
+     * PENDING, CANCELED, or otherwise inactive subscription.
+     */
+    const subscription =
+      await prisma.organizationSubscription.findFirst({
+        where: { organizationId },
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        select: {
+          id: true,
+          status: true,
+          endedAt: true,
+          currentPeriodStart: true,
+          currentPeriodEnd: true,
+          trialStartsAt: true,
+          trialEndsAt: true,
+          plan: {
+            select: {
+              maxUsers: true,
+              maxProducts: true,
+              maxLocations: true,
+              maxMonthlyTransactions: true,
+            },
+          },
+        },
+      });
+
+    let periodStart: Date | null = null;
+    let periodEnd: Date | null = null;
+
+    if (subscription && !subscription.endedAt) {
+      if (
+        subscription.status === "ACTIVE" &&
+        subscription.currentPeriodStart &&
+        subscription.currentPeriodEnd &&
+        now >= subscription.currentPeriodStart &&
+        now < subscription.currentPeriodEnd
+      ) {
+        periodStart = subscription.currentPeriodStart;
+        periodEnd = subscription.currentPeriodEnd;
+      } else if (
+        subscription.status === "TRIALING" &&
+        subscription.trialStartsAt &&
+        subscription.trialEndsAt &&
+        now >= subscription.trialStartsAt &&
+        now < subscription.trialEndsAt
+      ) {
+        periodStart = subscription.trialStartsAt;
+        periodEnd = subscription.trialEndsAt;
+      }
+    }
+
+    const [
+      memberCount,
+      pendingInvitationCount,
+      productCount,
+      monthlyTransactionCount,
+    ] = await Promise.all([
+      prisma.organizationMembership.count({
+        where: { organizationId },
+      }),
+
+      prisma.organizationInvitation.count({
+        where: {
+          organizationId,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+      }),
+
+      prisma.product.count({
+        where: { organizationId },
+      }),
+
+      periodStart && periodEnd
+        ? prisma.dispenseTransaction.count({
+            where: {
+              organizationId,
+              status: "COMPLETED",
+              date: {
+                gte: periodStart,
+                lt: periodEnd,
+              },
+            },
+          })
+        : Promise.resolve(0),
+    ]);
+
+    const maxUsers = subscription?.plan.maxUsers ?? null;
+    const maxProducts = subscription?.plan.maxProducts ?? null;
+    const maxLocations = subscription?.plan.maxLocations ?? null;
+    const maxMonthlyTransactions =
+      subscription?.plan.maxMonthlyTransactions ?? null;
+
+    response.json({
+      success: true,
+      data: {
+        subscription: {
+          id: subscription?.id ?? null,
+          status: subscription?.status ?? null,
+          hasValidUsagePeriod: Boolean(periodStart && periodEnd),
+        },
+
+        users: {
+          used: memberCount,
+          limit: maxUsers,
+        },
+
+        pendingInvitations: {
+          used: pendingInvitationCount,
+        },
+
+        seats: {
+          used: memberCount + pendingInvitationCount,
+          limit: maxUsers,
+        },
+
+        products: {
+          used: productCount,
+          limit: maxProducts,
+        },
+
+        monthlyTransactions: {
+          used: monthlyTransactionCount,
+          limit: maxMonthlyTransactions,
+          periodStart,
+          periodEnd,
+        },
+
+        locations: {
+          tracked: false,
+          used: null,
+          limit: maxLocations,
+        },
+
+        generatedAt: now,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch organization subscription usage:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch organization subscription usage.",
+    });
+  }
+});
+
+/* ============================================================
+   GET /api/billing/payments
+   ============================================================ */
+
+router.get("/payments", async (request, response) => {
+  try {
+    const organizationId = request.auth?.organizationId;
+
+    if (!organizationId) {
+      response.status(403).json({
+        success: false,
+        message: "Organization context is required.",
+      });
+      return;
+    }
+
+    const parsedLimit = Number(request.query.limit ?? 25);
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit >= 1
+        ? Math.min(parsedLimit, 100)
+        : 25;
+
+    const payments = await prisma.billingPayment.findMany({
+      where: {
+  OR: [
+    {
+      subscription: {
+        is: { organizationId },
+      },
+    },
+    {
+      subscriptionChangeRequest: {
+        is: { organizationId },
+      },
+    },
+  ],
+},
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        provider: true,
+        method: true,
+        status: true,
+        amount: true,
+        currency: true,
+        providerReference: true,
+        receiptNumber: true,
+        failureCode: true,
+        failureMessage: true,
+        initiatedAt: true,
+        paidAt: true,
+        failedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        subscription: {
+          select: {
+            id: true,
+            billingInterval: true,
+            plan: {
+              select: {
+                code: true,
+                name: true,
+              },
+            },
+          },
+        },
+        subscriptionChangeRequest: {
+          select: {
+            id: true,
+            requestedInterval: true,
+            requestedPlan: {
+              select: {
+                code: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    response.json({
+      success: true,
+      data: payments,
+    });
+  } catch (error) {
+    console.error(
+      "Failed to fetch organization billing payments:",
+      error,
+    );
+
+    response.status(500).json({
+      success: false,
+      message: "Failed to fetch organization billing payments.",
+    });
+  }
+});
+router.get("/payments/:id/verify", async (request, response) => {
+  const organizationId = request.auth?.organizationId;
+  const paymentId = request.params.id;
+
+  if (!organizationId) {
+    return response.status(401).json({
+      success: false,
+      message: "Organization context is required.",
+    });
+  }
+
+  try {
+    const payment = await prisma.billingPayment.findFirst({
+      where: {
+        id: paymentId,
+        provider: "INTASEND",
+        subscriptionChangeRequest: {
+          is: { organizationId },
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        providerReference: true,
+        providerCheckoutId: true,
+        subscriptionId: true,
+      },
+    });
+
+    if (!payment) {
+      return response.status(404).json({
+        success: false,
+        message: "The payment was not found for this organization.",
+      });
+    }
+
+    if (payment.status === "SUCCEEDED" && payment.subscriptionId) {
+      return response.json({
+        success: true,
+        data: {
+          paymentId: payment.id,
+          status: "SUCCEEDED",
+          subscriptionId: payment.subscriptionId,
+        },
+      });
+    }
+
+    console.error("[IntaSend verification identifiers]", {
+  paymentId: payment.id,
+  hasProviderReference: Boolean(payment.providerReference),
+  providerReferencePrefix:
+    payment.providerReference?.slice(0, 8) ?? null,
+  hasProviderCheckoutId: Boolean(payment.providerCheckoutId),
+  providerCheckoutIdPrefix:
+    payment.providerCheckoutId?.slice(0, 8) ?? null,
+});
+
+const verified = await verifyIntaSendStatus({
+  invoiceId: payment.providerReference,
+  checkoutId: payment.providerCheckoutId,
+});
+
+    if (verified.apiRef !== payment.id) {
+      return response.status(409).json({
+        success: false,
+        message:
+          "The provider payment reference does not match this payment record.",
+      });
+    }
+
+    if (verified.state === "COMPLETE") {
+      const activation = await activateVerifiedIntaSendPayment(
+        payment.id,
+        verified,
+      );
+
+      return response.json({
+        success: true,
+        data: {
+          paymentId: payment.id,
+          status: "SUCCEEDED",
+          subscriptionId: activation.subscriptionId,
+          alreadyProcessed: activation.alreadyProcessed,
+        },
+      });
+    }
+
+    if (
+      verified.state === "FAILED" ||
+      verified.state === "CANCELED"
+    ) {
+      const nextStatus =
+        verified.state === "CANCELED" ? "CANCELED" : "FAILED";
+
+      await prisma.billingPayment.updateMany({
+        where: {
+          id: payment.id,
+          status: {
+            in: ["PENDING", "PROCESSING"],
+          },
+        },
+        data: {
+          status: nextStatus,
+          failedAt: new Date(),
+          failureCode: verified.state,
+          failureMessage:
+            `IntaSend payment state: ${verified.state}`,
+        },
+      });
+
+      return response.json({
+        success: true,
+        data: {
+          paymentId: payment.id,
+          status: nextStatus,
+        },
+      });
+    }
+
+    if (
+      verified.state === "PROCESSING" ||
+      verified.state === "RETRY" ||
+      verified.state === "PARTIAL"
+    ) {
+      await prisma.billingPayment.updateMany({
+        where: {
+          id: payment.id,
+          status: "PENDING",
+        },
+        data: {
+          status: "PROCESSING",
+        },
+      });
+    }
+
+    return response.json({
+      success: true,
+      data: {
+        paymentId: payment.id,
+        status: verified.state,
+        message:
+          "Payment is not yet confirmed. Check again shortly.",
+      },
+    });
+  } catch (error) {
+    if (error instanceof BillingPaymentActivationError) {
+      return response.status(409).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+      });
+    }
+
+    console.error("Payment verification failed:", error);
+
+    return response.status(502).json({
+      success: false,
+      message:
+        "Unable to verify payment with IntaSend. Please try again shortly.",
+    });
+  }
+});
+
+export default router;

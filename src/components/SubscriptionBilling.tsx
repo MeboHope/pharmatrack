@@ -380,6 +380,36 @@ const [billingMessage, setBillingMessage] =
 const [billingError, setBillingError] =
   useState<string | null>(null);
 
+  const verifyPaymentFromHistory = async (paymentId: string) => {
+  setBillingActionId(paymentId);
+  setBillingError(null);
+  setBillingMessage("Checking payment status with IntaSend...");
+
+  try {
+    const result = await verifyBillingPayment(paymentId);
+
+    if (result.status === "SUCCEEDED") {
+      setBillingMessage(
+        "Payment verified successfully. Refreshing subscription details.",
+      );
+    } else {
+      setBillingMessage(
+        `Payment status: ${result.status}. No new payment was initiated.`,
+      );
+    }
+
+    await loadBillingData(true);
+  } catch (error: unknown) {
+    setBillingError(
+      error instanceof Error
+        ? error.message
+        : "Unable to verify the payment. Please try again shortly.",
+    );
+  } finally {
+    setBillingActionId(null);
+  }
+};
+
   const loadBillingData = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) {
@@ -1298,8 +1328,35 @@ const handleStartCheckout = async (request: BillingPlanChangeRequest) => {
                         </td>
 
                         <td className="px-5 py-4">
-                          <StatusBadge status={payment.status} />
-                        </td>
+  <div className="flex flex-col items-start gap-2">
+    <StatusBadge status={payment.status} />
+
+    {payment.provider === "INTASEND" &&
+      ["PENDING", "PROCESSING"].includes(
+        payment.status.toUpperCase(),
+      ) && (
+        <button
+          type="button"
+          onClick={() =>
+            void verifyPaymentFromHistory(payment.id)
+          }
+          disabled={billingActionId !== null}
+          className="inline-flex min-h-8 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${
+              billingActionId === payment.id
+                ? "animate-spin"
+                : ""
+            }`}
+          />
+          {billingActionId === payment.id
+            ? "Checking..."
+            : "Verify status"}
+        </button>
+      )}
+  </div>
+</td>
                       </tr>
                     ))}
                   </tbody>

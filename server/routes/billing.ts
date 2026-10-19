@@ -52,6 +52,8 @@ const planChangeRequestSelect = {
       monthlyPrice: true,
       annualPrice: true,
       currency: true,
+      features: true,
+      amount: true
     },
   },
 } as const;
@@ -584,16 +586,19 @@ router.post(
        * duplicate provider sessions.
        */
       await prisma.billingPayment.update({
-        where: {
-          id: checkoutPreparation.paymentId,
-        },
-        data: {
-          providerCheckoutId: checkout.id,
-          metadata: {
-            checkoutUrl: checkout.url,
-          },
-        },
-      });
+  where: {
+    id: checkoutPreparation.paymentId,
+  },
+  data: {
+    providerCheckoutId: checkout.id,
+    metadata: {
+      checkoutUrl: checkout.url,
+      ...(checkout.signature
+        ? { checkoutSignature: checkout.signature }
+        : {}),
+    },
+  },
+});
 
       await auditService.log({
         action: "BILLING_CHECKOUT_CREATED",
@@ -1111,12 +1116,15 @@ router.get("/payments/:id/verify", async (request, response) => {
         },
       },
       select: {
-        id: true,
-        status: true,
-        providerReference: true,
-        providerCheckoutId: true,
-        subscriptionId: true,
-      },
+  id: true,
+  status: true,
+  amount: true,
+  currency: true,
+  providerReference: true,
+  providerCheckoutId: true,
+  subscriptionId: true,
+  metadata: true,
+},
     });
 
     if (!payment) {
@@ -1137,10 +1145,30 @@ router.get("/payments/:id/verify", async (request, response) => {
       });
     }
 
-    const verified = await verifyIntaSendStatus({
-      invoiceId: payment.providerReference,
-      checkoutId: payment.providerCheckoutId,
-    });
+   
+
+const metadata =
+  payment.metadata &&
+  typeof payment.metadata === "object" &&
+  !Array.isArray(payment.metadata)
+    ? (payment.metadata as {
+        checkoutSignature?: unknown;
+      })
+    : null;
+
+const checkoutSignature =
+  typeof metadata?.checkoutSignature === "string"
+    ? metadata.checkoutSignature
+    : null;
+
+const verified = await verifyIntaSendStatus({
+  invoiceId: payment.providerReference,
+  checkoutId: payment.providerCheckoutId,
+  signature: checkoutSignature,
+  apiRef: payment.id,
+  expectedAmount: payment.amount.toString(),
+  expectedCurrency: payment.currency,
+});
 
     if (verified.apiRef !== payment.id) {
       return response.status(409).json({

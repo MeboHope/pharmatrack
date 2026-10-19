@@ -34,6 +34,7 @@ interface FeatureData {
   subtitle: string;
   description: string;
   icon: typeof Package;
+  image: string;
   benefits: string[];
   workflow: string[];
   color: string;
@@ -162,7 +163,8 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "Manage medicines, stock levels, expiry dates, batch information, and stock movements from one organized pharmacy inventory system.",
     icon: Package,
-    benefits: [
+image: "inventory.jpg",
+benefits: [
       "Real-time stock visibility",
       "Low-stock monitoring",
       "Expiry-date tracking",
@@ -186,6 +188,7 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "Support accurate medicine dispensing with patient records, prescription information, stock validation, and transaction history working together.",
     icon: Pill,
+    image: "dispensing.jpg",
     benefits: [
       "Quick medicine selection",
       "Patient-linked dispensing",
@@ -210,6 +213,7 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "Maintain structured patient records and connect dispensing activities with the people receiving care.",
     icon: Users,
+    image: "patients.jpg",
     benefits: [
       "Centralized patient records",
       "Fast patient search",
@@ -234,6 +238,7 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "Manage supplier information and connect stock receiving activities with the medicines entering your pharmacy.",
     icon: Truck,
+    image: "suppliers.jpg",
     benefits: [
       "Centralized supplier records",
       "Supplier contact information",
@@ -258,6 +263,7 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "Understand dispensing activity, inventory movements, and pharmacy operations through structured reporting and organized records.",
     icon: BarChart3,
+    image: "reports.jpg",
     benefits: [
       "Operational visibility",
       "Transaction history",
@@ -282,6 +288,7 @@ const features: Record<FeatureKey, FeatureData> = {
     description:
       "PharmaTrack is designed around authenticated access, role-based permissions, secure sessions, and audit records for important activities.",
     icon: ShieldCheck,
+    image: "security.jpg",
     benefits: [
       "Authenticated user access",
       "Role-based permissions",
@@ -420,37 +427,36 @@ function FeatureDetails() {
 
       <main>
         {/* Hero */}
-        <section className="relative overflow-hidden bg-gradient-to-br from-[#22577A] via-[#1B526F] to-[#173F57]">
-          <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-20">
-            <div className="absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white blur-3xl" />
-            <div className="absolute -bottom-24 -left-20 h-80 w-80 rounded-full bg-[#57CC99] blur-3xl" />
-          </div>
+                {/* Hero */}
+        <section className="relative overflow-hidden bg-gradient-to-br from-white via-[#F4FAF8] to-[#E8F7EF]">
+          <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-[#80ED99]/20 blur-3xl" />
+          <div className="pointer-events-none absolute -right-24 bottom-0 h-72 w-72 rounded-full bg-sky-100/70 blur-3xl" />
 
-          <div className="relative mx-auto max-w-7xl px-6 py-20 lg:px-8 lg:py-28">
-            <div className="grid items-center gap-14 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-20 lg:px-8 lg:py-24">
+            <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
               <Reveal from="left">
                 <div>
-                  <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white backdrop-blur">
-                    <CheckCircle2 size={16} />
+                  <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#80ED99]/60 bg-white px-4 py-2 text-xs font-bold text-[#22577A] shadow-sm">
+                    <CheckCircle2 size={16} className="text-emerald-600" />
                     PharmaTrack Feature
                   </div>
 
-                  <h1 className="max-w-3xl text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+                  <h1 className="max-w-2xl text-4xl font-black leading-tight tracking-tight text-[#173F57] sm:text-5xl lg:text-6xl">
                     {featureData.title}
                   </h1>
 
-                  <p className="mt-5 max-w-2xl text-xl font-semibold text-[#CDEFE3]">
+                  <p className="mt-5 max-w-2xl text-xl font-bold leading-relaxed text-[#278653]">
                     {featureData.subtitle}
                   </p>
 
-                  <p className="mt-6 max-w-2xl text-base leading-8 text-white/80 sm:text-lg">
+                  <p className="mt-6 max-w-2xl text-base leading-8 text-slate-600 sm:text-lg">
                     {featureData.description}
                   </p>
 
-                  <div className="mt-9 flex flex-wrap gap-4">
+                  <div className="mt-8 flex flex-wrap gap-3">
                     <Link
                       to="/"
-                      className="group inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-bold text-[#22577A] shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl"
+                      className="group inline-flex items-center gap-2 rounded-xl bg-[#80ED99] px-6 py-3.5 text-sm font-extrabold text-[#173F57] shadow-lg shadow-emerald-900/10 transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#95F2AA] hover:shadow-xl"
                     >
                       Explore PharmaTrack
                       <ArrowRight
@@ -461,7 +467,7 @@ function FeatureDetails() {
 
                     <Link
                       to="/#contact"
-                      className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-6 py-3.5 text-sm font-bold text-white backdrop-blur transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/20"
+                      className="inline-flex items-center gap-2 rounded-xl border border-[#22577A]/20 bg-white px-6 py-3.5 text-sm font-bold text-[#22577A] shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
                     >
                       Contact Us
                     </Link>
@@ -470,19 +476,46 @@ function FeatureDetails() {
               </Reveal>
 
               <Reveal from="right" scale delay={150}>
-                <div className="flex justify-center lg:justify-end">
-                  <div className="relative">
-                    <div className="absolute inset-0 rounded-[2rem] bg-white/20 blur-2xl" />
+                <div className="relative mx-auto w-full max-w-xl lg:ml-auto">
+                  <div className="absolute -inset-4 rounded-[2rem] bg-[#80ED99]/30 blur-2xl" />
 
-                    <div className="relative flex h-64 w-64 items-center justify-center rounded-[2rem] border border-white/20 bg-white/10 shadow-2xl backdrop-blur-xl transition-transform duration-500 hover:scale-[1.03] sm:h-72 sm:w-72">
-                      <div className="flex h-32 w-32 items-center justify-center rounded-[2rem] bg-white shadow-xl">
-                        <Icon
-                          size={64}
-                          strokeWidth={1.7}
-                          style={{ color: featureData.color }}
-                        />
+                  <div className="relative overflow-hidden rounded-[1.75rem] border-4 border-white bg-white shadow-2xl shadow-[#173F57]/15">
+                    <img
+                      src={`/features/${featureData.image}`}
+                      alt={featureData.title}
+                      className="aspect-[4/3] w-full object-cover sm:aspect-[5/4]"
+                      fetchPriority="high"
+                    />
+
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#12324A]/90 via-[#12324A]/45 to-transparent p-5 pt-16 sm:p-7 sm:pt-20">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/30 bg-white/95 shadow-lg">
+                          <Icon
+                            size={25}
+                            strokeWidth={1.8}
+                            style={{ color: featureData.color }}
+                          />
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wider text-white/75">
+                            PharmaTrack
+                          </p>
+                          <p className="mt-1 text-sm font-extrabold text-white sm:text-base">
+                            {featureData.title}
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="absolute -right-2 top-5 flex items-center gap-2 rounded-xl border border-white/80 bg-white px-3 py-2.5 shadow-lg sm:-right-4 sm:top-8 sm:px-4">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    </span>
+                    <span className="text-xs font-extrabold text-[#173F57]">
+                      Designed for your workflow
+                    </span>
                   </div>
                 </div>
               </Reveal>

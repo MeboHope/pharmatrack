@@ -169,6 +169,7 @@ const navItems = [
 const features = [
   {
     icon: Package,
+    image: "inventory.jpg",
     title: "Smart Inventory Management",
     description:
       "Keep medicines, quantities, batches and expiry information organized in one secure system.",
@@ -176,6 +177,7 @@ const features = [
   },
   {
     icon: Pill,
+    image: "dispensing.jpg",
     title: "Fast Dispensing",
     description:
       "Process prescriptions efficiently while keeping dispensing records connected to patient information.",
@@ -183,6 +185,7 @@ const features = [
   },
   {
     icon: Users,
+    image: "patients.jpg",
     title: "Patient Records",
     description:
       "Maintain accessible patient records and medication history to support better pharmacy workflows.",
@@ -190,6 +193,7 @@ const features = [
   },
   {
     icon: Truck,
+    image: "suppliers.jpg",
     title: "Supplier Management",
     description:
       "Organize supplier information and keep stock receiving and supplier activities easier to track.",
@@ -197,6 +201,7 @@ const features = [
   },
   {
     icon: BarChart3,
+    image: "reports.jpg",
     title: "Reports & Insights",
     description:
       "Turn pharmacy activity into useful reports that help you understand operations and make informed decisions.",
@@ -204,6 +209,7 @@ const features = [
   },
   {
     icon: ShieldCheck,
+    image: "security.jpg",
     title: "Secure Access",
     description:
       "Role-based access and secure authentication help protect sensitive pharmacy information.",
@@ -414,76 +420,56 @@ const LandingScreen: React.FC<LandingScreenProps> = ({
       ========================================================= */}
       <section
         id="home"
-        className="relative overflow-hidden pt-28"
+        className="relative scroll-mt-20 overflow-hidden bg-gradient-to-br from-white via-[#F4FAF8] to-[#E8F7EF]"
       >
-        <div
-          className="pointer-events-none absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: "url('/hero/pharmacy-hero.jpg')" }}
-        />
+        <div className="pointer-events-none absolute -left-32 top-16 h-80 w-80 rounded-full bg-[#80ED99]/20 blur-3xl" />
+        <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-sky-100/70 blur-3xl" />
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#12324A] via-[#173F57]/90 to-[#1D506D]/55" />
-
-        <div className="pointer-events-none absolute inset-0">
-          <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-[#80ED99]/10 blur-3xl" />
-
-          <div className="absolute -bottom-48 -left-40 h-[32rem] w-[32rem] rounded-full bg-sky-300/10 blur-3xl" />
-
-          <div
-            className="absolute inset-0 opacity-[0.05]"
-            style={{
-              backgroundImage:
-                "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
-              backgroundSize: "42px 42px",
-            }}
-          />
-        </div>
-
-        <div className="relative mx-auto max-w-7xl px-5 pb-20 pt-16 sm:px-6 sm:pb-24 sm:pt-20 lg:px-8 lg:pb-28 lg:pt-24">
-          <div className="grid items-center gap-14 lg:grid-cols-[0.95fr_1.05fr] lg:gap-16">
+        <div className="relative mx-auto max-w-7xl px-5 pb-16 pt-32 sm:px-6 sm:pb-20 sm:pt-36 lg:px-8 lg:pb-24 lg:pt-40">
+          <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-14">
             <Reveal
               from="left"
               delay={100}
               className="relative z-10"
             >
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3.5 py-2 text-xs font-bold text-white shadow-sm backdrop-blur-sm">
-                <Sparkles className="h-3.5 w-3.5 text-[#80ED99]" />
+              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#80ED99]/60 bg-white/90 px-4 py-2 text-xs font-bold text-[#22577A] shadow-sm">
+                <Sparkles className="h-4 w-4 text-emerald-600" />
                 Modern pharmacy management made simpler
               </div>
 
-              <h1 className="max-w-2xl text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+              <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-[#173F57] sm:text-5xl lg:text-6xl">
                 Smarter pharmacy operations.
-                <span className="mt-2 block text-[#80ED99]">
+                <span className="mt-2 block text-[#278653]">
                   Better patient care.
                 </span>
               </h1>
 
-              <p className="mt-6 max-w-xl text-base leading-7 text-white/75 sm:text-lg sm:leading-8">
+              <p className="mt-6 max-w-xl text-base leading-7 text-slate-600 sm:text-lg sm:leading-8">
                 PharmaTrack helps pharmacies organize inventory,
-                dispensing, patients, suppliers, reports and
-                daily operations in one secure management system.
+                dispensing, patients, suppliers, reports and daily
+                operations in one secure management system.
               </p>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={onSignUpClick}
-                  className="group inline-flex items-center justify-center gap-2 rounded-xl bg-[#80ED99] px-6 py-3.5 text-sm font-extrabold text-[#173F57] shadow-lg shadow-black/10 transition-all hover:-translate-y-0.5 hover:bg-[#95F2AA] hover:shadow-xl"
+                  className="group inline-flex items-center justify-center gap-2 rounded-xl bg-[#80ED99] px-6 py-3.5 text-sm font-extrabold text-[#173F57] shadow-lg shadow-emerald-900/10 transition-all hover:-translate-y-0.5 hover:bg-[#95F2AA] hover:shadow-xl"
                 >
                   Get Started
-
                   <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                 </button>
 
                 <button
                   type="button"
                   onClick={onLoginClick}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-6 py-3.5 text-sm font-extrabold text-white backdrop-blur-sm transition-all hover:bg-white/15"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#22577A]/20 bg-white px-6 py-3.5 text-sm font-extrabold text-[#22577A] shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#22577A]/40 hover:shadow-md"
                 >
                   Log In
                 </button>
               </div>
 
-              <div className="mt-9 grid gap-3 sm:grid-cols-3">
+              <div className="mt-8 grid gap-3 sm:grid-cols-3">
                 {[
                   "Secure access",
                   "Centralized records",
@@ -491,242 +477,63 @@ const LandingScreen: React.FC<LandingScreenProps> = ({
                 ].map((item) => (
                   <div
                     key={item}
-                    className="flex items-center gap-2 text-xs font-semibold text-white/70"
+                    className="flex items-center gap-2 text-xs font-semibold text-slate-600"
                   >
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-[#80ED99]" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                     {item}
                   </div>
                 ))}
               </div>
             </Reveal>
 
-            {/* ORIGINAL-STYLE DASHBOARD VISUAL */}
             <Reveal
               from="right"
               delay={220}
               scale
               className="relative"
             >
-              <div className="relative mx-auto max-w-xl">
-                <div className="absolute -inset-5 rounded-[2rem] bg-[#80ED99]/10 blur-2xl" />
+              <div className="absolute -inset-4 rounded-[2rem] bg-[#80ED99]/30 blur-2xl" />
 
-                <div className="relative overflow-hidden rounded-[1.6rem] border border-white/15 bg-white/95 shadow-2xl shadow-black/20">
-                  {/* Dashboard top bar */}
-                  <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
+              <div className="relative">
+                <div className="relative aspect-[4/3] overflow-hidden rounded-[1.75rem] border-4 border-white bg-white shadow-2xl shadow-[#173F57]/15 sm:aspect-[5/4]">
+                  <img
+                    src="/hero/pharmacy-hero-new.jpg"
+                    alt="Professional pharmacist working in a modern pharmacy"
+                    className="h-full w-full object-cover"
+                    fetchPriority="high"
+                  />
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#12324A]/40 via-transparent to-transparent" />
+
+                  <div className="absolute bottom-4 left-4 right-4 rounded-2xl border border-white/50 bg-white/95 p-4 shadow-lg backdrop-blur-md sm:bottom-5 sm:left-5 sm:right-5 sm:p-5">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#22577A]">
-                        <Pill className="h-5 w-5 text-white" />
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E8F7EF]">
+                        <Pill className="h-5 w-5 text-[#22577A]" />
                       </div>
 
-                      <div>
-                        <div className="text-xs font-extrabold text-slate-900">
-                          PharmaTrack
-                        </div>
-
-                        <div className="text-[10px] text-slate-400">
-                          Pharmacy Dashboard
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <div className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold text-emerald-700 sm:flex">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                        System Active
-                      </div>
-
-                      <div className="h-8 w-8 rounded-full bg-[#22577A]/10" />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-5">
-                    {/* Welcome */}
-                    <div className="mb-5 flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                          Overview
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-extrabold text-[#173F57]">
+                          Your pharmacy, connected
                         </p>
-
-                        <h3 className="mt-1 text-lg font-extrabold text-slate-900">
-                          Pharmacy at a glance
-                        </h3>
-                      </div>
-
-                      <div className="rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-slate-500 shadow-sm">
-                        Today
-                      </div>
-                    </div>
-
-                    {/* Stats */}
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      {[
-                        {
-                          label: "Medicines",
-                          value: "1,248",
-                          icon: Package,
-                        },
-                        {
-                          label: "Patients",
-                          value: "486",
-                          icon: Users,
-                        },
-                        {
-                          label: "Dispensed",
-                          value: "72",
-                          icon: Pill,
-                        },
-                        {
-                          label: "Alerts",
-                          value: "08",
-                          icon: BellRing,
-                        },
-                      ].map((stat) => {
-                        const Icon = stat.icon;
-
-                        return (
-                          <div
-                            key={stat.label}
-                            className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#22577A]/8">
-                                <Icon className="h-3.5 w-3.5 text-[#22577A]" />
-                              </div>
-                            </div>
-
-                            <div className="mt-3 text-lg font-black text-slate-900">
-                              {stat.value}
-                            </div>
-
-                            <div className="mt-0.5 text-[9px] font-semibold text-slate-400">
-                              {stat.label}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Activity */}
-                    <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-                      <div className="mb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Activity className="h-4 w-4 text-[#22577A]" />
-
-                          <span className="text-xs font-extrabold text-slate-800">
-                            Recent Activity
-                          </span>
-                        </div>
-
-                        <span className="text-[9px] font-bold text-[#22577A]">
-                          View all
-                        </span>
-                      </div>
-
-                      <div className="space-y-3">
-                        {[
-                          {
-                            title: "Prescription dispensed",
-                            detail: "Patient transaction completed",
-                            time: "2 min ago",
-                            icon: Pill,
-                          },
-                          {
-                            title: "Stock received",
-                            detail: "New medicine quantities recorded",
-                            time: "18 min ago",
-                            icon: Truck,
-                          },
-                          {
-                            title: "Inventory checked",
-                            detail: "Daily stock reconciliation",
-                            time: "42 min ago",
-                            icon: Package,
-                          },
-                        ].map((item) => {
-                          const Icon = item.icon;
-
-                          return (
-                            <div
-                              key={item.title}
-                              className="flex items-center gap-3"
-                            >
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F4FAF8]">
-                                <Icon className="h-3.5 w-3.5 text-[#22577A]" />
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-[10px] font-bold text-slate-800">
-                                  {item.title}
-                                </div>
-
-                                <div className="truncate text-[9px] text-slate-400">
-                                  {item.detail}
-                                </div>
-                              </div>
-
-                              <span className="shrink-0 text-[8px] font-semibold text-slate-400">
-                                {item.time}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Bottom cards */}
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl bg-[#22577A] p-4 text-white">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-[9px] font-semibold text-white/60">
-                              Inventory Health
-                            </p>
-
-                            <p className="mt-1 text-xl font-black">
-                              94%
-                            </p>
-                          </div>
-
-                          <BarChart3 className="h-5 w-5 text-[#80ED99]" />
-                        </div>
-
-                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
-                          <div className="h-full w-[94%] rounded-full bg-[#80ED99]" />
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-100 bg-white p-4">
-                        <div className="flex items-center gap-2">
-                          <BellRing className="h-4 w-4 text-amber-500" />
-
-                          <span className="text-[10px] font-extrabold text-slate-800">
-                            Attention Needed
-                          </span>
-                        </div>
-
-                        <p className="mt-2 text-[9px] leading-4 text-slate-400">
-                          8 inventory items require review.
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          Inventory, dispensing and records in one place.
                         </p>
+                      </div>
+
+                      <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 sm:flex">
+                        <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Floating Activity badge */}
-                <div className="absolute -bottom-5 -left-4 hidden items-center gap-3 rounded-2xl border border-white/60 bg-white px-4 py-3 shadow-xl sm:flex">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50">
+                <div className="absolute -right-2 top-5 flex items-center gap-2 rounded-xl border border-white/80 bg-white px-3 py-2.5 shadow-lg sm:-right-5 sm:top-8 sm:px-4">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50">
                     <Activity className="h-4 w-4 text-emerald-600" />
-                  </div>
-
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                      Activity
-                    </p>
-
-                    <p className="text-xs font-extrabold text-slate-800">
-                      Everything under control
-                    </p>
-                  </div>
+                  </span>
+                  <span className="text-xs font-extrabold text-[#173F57]">
+                    Smarter daily operations
+                  </span>
                 </div>
               </div>
             </Reveal>
@@ -737,13 +544,12 @@ const LandingScreen: React.FC<LandingScreenProps> = ({
           <button
             type="button"
             onClick={() => scrollTo("#features")}
-            className="flex flex-col items-center gap-1 text-white/50 transition-colors hover:text-white/80"
+            className="flex flex-col items-center gap-1 text-[#22577A]/60 transition-colors hover:text-[#22577A]"
             aria-label="Scroll to features"
           >
             <span className="text-[9px] font-bold uppercase tracking-[0.2em]">
               Explore
             </span>
-
             <ChevronDown className="h-4 w-4 animate-bounce" />
           </button>
         </div>
@@ -776,40 +582,59 @@ const LandingScreen: React.FC<LandingScreenProps> = ({
 
           <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, index) => {
-              const Icon = feature.icon;
+  const Icon = feature.icon;
 
-              return (
-                <Reveal
-                  key={feature.title}
-                  delay={index * 70}
-                  scale
-                >
-                  <Link
-                    to={feature.href}
-                    className="group block h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#22577A]/20 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-[#22577A]/10"
-                    aria-label={`Learn more about ${feature.title}`}
-                  >
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#F4FAF8] transition-colors group-hover:bg-[#22577A]">
-                      <Icon className="h-5 w-5 text-[#22577A] transition-colors group-hover:text-white" />
-                    </div>
+  return (
+    <Reveal
+      key={feature.title}
+      delay={index * 70}
+      scale
+    >
+      <Link
+        to={feature.href}
+        className="group block h-full overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-300 hover:-translate-y-2 hover:border-[#80ED99] hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-[#22577A]/15"
+        aria-label={`Learn more about ${feature.title}`}
+      >
+        <div className="relative h-52 overflow-hidden bg-[#173F57] sm:h-56">
+          <img
+            src={`/features/${feature.image}`}
+            alt={feature.title}
+            loading="lazy"
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
 
-                    <h3 className="mt-5 text-lg font-extrabold text-slate-900">
-                      {feature.title}
-                    </h3>
+          <div className="absolute inset-0 bg-gradient-to-t from-[#12324A]/85 via-[#12324A]/10 to-transparent" />
 
-                    <p className="mt-2 text-sm leading-6 text-slate-500">
-                      {feature.description}
-                    </p>
+          <div className="absolute bottom-4 left-4 flex h-11 w-11 items-center justify-center rounded-xl border border-white/30 bg-white/95 shadow-lg">
+            <Icon className="h-5 w-5 text-[#22577A]" />
+          </div>
 
-                    <div className="mt-5 flex items-center gap-1 text-xs font-bold text-[#22577A]">
-                      Learn more
+          <div className="absolute right-4 top-4 rounded-full border border-white/25 bg-[#173F57]/75 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-sm">
+            PharmaTrack
+          </div>
+        </div>
 
-                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
-                    </div>
-                  </Link>
-                </Reveal>
-              );
-            })}
+        <div className="flex h-[calc(100%-13rem)] min-h-48 flex-col p-6">
+          <h3 className="text-lg font-extrabold leading-snug text-slate-900 transition-colors group-hover:text-[#22577A]">
+            {feature.title}
+          </h3>
+
+          <p className="mt-3 flex-1 text-sm leading-6 text-slate-500">
+            {feature.description}
+          </p>
+
+          <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-xs font-bold text-[#22577A]">
+            <span>Explore feature</span>
+
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#F4FAF8] transition-all duration-300 group-hover:bg-[#80ED99]">
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </span>
+          </div>
+        </div>
+      </Link>
+    </Reveal>
+  );
+})}
           </div>
         </div>
       </section>

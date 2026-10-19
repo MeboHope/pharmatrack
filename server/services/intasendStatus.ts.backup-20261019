@@ -1,0 +1,169 @@
+const INTASEND_STATUS_URL =
+  "https://api.intasend.com/api/v1/payment/status/";
+
+export interface IntaSendVerifiedStatus {
+  invoiceId: string;
+  apiRef: string;
+  state: string;
+  amount: number | string;
+  currency: string;
+  providerReference: string | null;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function requiredString(
+  record: JsonRecord,
+  key: string,
+): string {
+  const value = record[key];
+
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(
+      `IntaSend status response is missing ${key}.`,
+    );
+  }
+
+  return value.trim();
+}
+
+/**
+ * Queries IntaSend directly. Use the checkout ID before an invoice
+ * ID has been received, or the invoice ID once one is available.
+ */
+export async function verifyIntaSendStatus(input: {
+  invoiceId?: string | null;
+  checkoutId?: string | null;
+}): Promise<IntaSendVerifiedStatus> {
+  const secretKey = process.env.INTASEND_SECRET_KEY?.trim();
+
+  if (!secretKey) {
+    throw new Error("INTASEND_SECRET_KEY is not configured.");
+  }
+
+  const invoiceId = input.invoiceId?.trim();
+  const checkoutId = input.checkoutId?.trim();
+
+  if (!invoiceId && !checkoutId) {
+    throw new Error(
+      "An IntaSend invoice ID or checkout ID is required.",
+    );
+  }
+
+  const identifier = invoiceId
+    ? { invoice_id: invoiceId }
+    : { checkout_id: checkoutId };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+
+  let response: Response;
+
+  try {
+    response = await fetch(INTASEND_STATUS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(identifier),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const responseText = await response.text();
+
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(responseText);
+  } catch {
+    throw new Error(
+      "IntaSend returned an unreadable payment-status response.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `IntaSend status verification failed with HTTP ${response.status}.`,
+    );
+  }
+
+  if (!isRecord(payload)) {
+    throw new Error("IntaSend returned an invalid status response.");
+  }
+
+  console.error(
+  "[IntaSend status diagnostic]",
+  JSON.stringify({
+    topLevelKeys: Object.keys(payload),
+    invoiceKeys: isRecord(payload.invoice)
+      ? Object.keys(payload.invoice)
+      : [],
+    hasInvoiceObject: isRecord(payload.invoice),
+    detail:
+      typeof payload.detail === "string"
+        ? payload.detail.slice(0, 300)
+        : isRecord(payload.detail)
+          ? Object.keys(payload.detail)
+          : null,
+  }),
+);
+
+  // The documented status response contains payment details in invoice.
+  const invoice = isRecord(payload.invoice)
+    ? payload.invoice
+    : payload;
+
+  const returnedInvoiceId = requiredString(
+    invoice,
+    "invoice_id",
+  );
+  const apiRef = requiredString(invoice, "api_ref");
+  const state = requiredString(invoice, "state");
+  const currency = requiredString(invoice, "currency");
+  const amount = invoice.value;
+
+  if (
+    typeof amount !== "string" &&
+    typeof amount !== "number"
+  ) {
+    throw new Error(
+      "IntaSend status response is missing a valid payment amount.",
+    );
+  }
+
+  if (
+    invoiceId &&
+    returnedInvoiceId !== invoiceId
+  ) {
+    throw new Error(
+      "IntaSend returned a different invoice than the one requested.",
+    );
+  }
+
+  const providerReference =
+    typeof invoice.provider_ref === "string"
+      ? invoice.provider_ref
+      : null;
+
+  return {
+    invoiceId: returnedInvoiceId,
+    apiRef,
+    state: state.toUpperCase(),
+    amount,
+    currency,
+    providerReference,
+  };
+}

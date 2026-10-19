@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+.printable-area,
+.pos-receipt-printable {
+  font-family: var(--font-mono), 'JetBrains Mono', 'Courier New', Courier, monospace;
+}
+
+@media print {
+  @page {
+    margin: 0 !important;
+    size: 80mm auto;
+  }
+
+  html, body, #root, main {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    width: 80mm !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Un-clip and un-transform any modal wrappers or backdrops during printing */
+  .fixed,
+  [class*="backdrop-blur"],
+  [class*="max-h-"],
+  div {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    transform: none !important;
+    max-height: none !important;
+  }
+
+  /* Hide non-printable components */
+  .no-print,
+  aside,
+  header,
+  nav,
+  button,
+  input,
+  select {
+    display: none !important;
+  }
+
+  /* Hide all elements by default when printing */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Render ONLY printable area / POS receipt items */
+  .printable-area,
+  .printable-area *,
+  .pos-receipt-printable,
+  .pos-receipt-printable * {
+    visibility: visible !important;
+  }
+
+  /* Absolute positioning for POS thermal receipt layout at top-left corner */
+  .printable-area,
+  .pos-receipt-printable {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 4mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: var(--font-mono), 'JetBrains Mono', 'Courier New', Courier, monospace !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+    z-index: 9999999 !important;
+  }
+}
+
